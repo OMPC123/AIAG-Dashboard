@@ -45,7 +45,7 @@ npm start
 ```bash
 brew install node gh
 gh auth login            # 選 GitHub.com → HTTPS → Login with a web browser
-gh repo clone <你的帳號>/<儲存庫名稱> ~/AIAG_Dashboard
+gh repo clone OMPC123/AIAG-Dashboard ~/AIAG_Dashboard
 cd ~/AIAG_Dashboard && npm install && npm start
 ```
 
