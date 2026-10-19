@@ -68,6 +68,19 @@ cd ~/AIAG_Dashboard && git pull && npm install
 - 兩台電腦需要在同一個區網或 VPN 內（例如 Tailscale）。
 - MacBook 闔上螢幕或進入睡眠時就連不到，畫面會顯示「離線」並保留上次的資料。Mac 的 IP 若會變動，可以在路由器設定固定 IP，或改填 `http://<電腦名稱>.local:47821`。
 
+### 連不上時（連線被拒 / 連線逾時）
+
+1. **確認 IP**：要用 Wi-Fi 或有線網卡的 IP，不要用 VMware、Hyper-V 等虛擬網卡的 IP。設定畫面會把實體網卡的 IP 排在最前面。
+2. **Windows 防火牆**：Wi-Fi 若被設成「公用網路」，系統不會跳出允許的詢問，連入會直接被擋。請用**系統管理員身分**開啟 PowerShell，加一條只允許同網段連入的規則：
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "AIAG Dashboard (TCP 47821)" -Direction Inbound -Protocol TCP -LocalPort 47821 -RemoteAddress LocalSubnet -Action Allow -Profile Any
+   ```
+
+   不再需要時，可以這樣移除：`Remove-NetFirewallRule -DisplayName "AIAG Dashboard (TCP 47821)"`
+3. **macOS 防火牆**：系統設定 → 網路 → 防火牆 → 選項，確認 Electron 是「允許傳入連線」。
+4. **測試**：在 Mac 執行 `nc -vz <Windows IP> 47821`；在 Windows 執行 `Test-NetConnection <Mac IP> -Port 47821`。
+
 ### macOS 上的資料位置
 
 | 項目 | 路徑 |
