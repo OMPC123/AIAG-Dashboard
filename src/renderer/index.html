@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" />
+  <title>AIAG Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div>
+        <h1>AIAG Dashboard</h1>
+        <p class="sub" id="updated">讀取中…</p>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn" id="btn-refresh" title="立即重新整理">↻ 重新整理</button>
+      <button class="btn toggle" id="btn-pin" title="視窗置頂" aria-pressed="false">📌 置頂</button>
+      <button class="btn" id="btn-settings" title="設定">⚙ 設定</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="tiles" id="tiles" aria-label="總覽"></section>
+    <div id="errors"></div>
+    <section class="grid" id="accounts" aria-label="帳號"></section>
+    <section class="charts">
+      <article class="card wide">
+        <header class="card-h"><h2>Claude 每日輸出 tokens（近 14 天）</h2><div class="legend" id="daily-legend"></div></header>
+        <div class="chart" id="daily-chart"></div>
+        <details class="table-view"><summary>表格檢視</summary><div id="daily-table"></div></details>
+      </article>
+    </section>
+  </main>
+
+  <dialog id="settings">
+    <form method="dialog" id="settings-form">
+      <h2>設定</h2>
+      <label class="row">更新間隔（秒）<input type="number" min="3" max="600" name="refreshSeconds" /></label>
+      <label class="row check"><input type="checkbox" name="closeToTray" /> 關閉視窗時縮到系統匣</label>
+      <label class="row">這台電腦的名稱<input type="text" name="machineName" /></label>
+
+      <fieldset>
+        <legend>多台電腦</legend>
+        <label class="row check"><input type="checkbox" name="shareEnabled" /> 分享這台電腦的資料給區網內其他電腦（唯讀）</label>
+        <label class="row">連接埠<input type="number" min="1024" max="65535" name="sharePort" /></label>
+        <label class="col">存取 token（另一台電腦需要填入）
+          <span style="display:flex;gap:6px"><input type="text" name="shareToken" readonly style="flex:1;font-family:Menlo,Consolas,monospace" />
+          <button type="button" class="btn" id="share-copy">複製</button><button type="button" class="btn" id="share-newtoken">重新產生</button></span>
+        </label>
+        <p class="hint" id="share-status"></p>
+        <label class="col">要讀取的其他電腦（每行：名稱 | 網址 | token）
+          <textarea name="remotes" rows="3" placeholder="辦公室電腦 | http://192.168.1.20:47821 | xxxxxxxx"></textarea>
+        </label>
+        <p class="hint">在第二台電腦也執行這個 Dashboard 並開啟「分享」，再把它顯示的網址與 token 填到這裡。第一次開啟分享時，Windows 防火牆會詢問是否允許，請允許「私人網路」。</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Claude</legend>
+        <div id="label-fields"></div>
+        <label class="col">額外的 Claude Code 設定目錄（CLAUDE_CONFIG_DIR，每行一個）
+          <textarea name="extraConfigDirs" rows="3" placeholder="C:\Users\you\.claude-account2"></textarea>
+        </label>
+        <p class="hint">第二個帳號若是用另一個 CLAUDE_CONFIG_DIR 登入 Claude Code CLI，把該目錄加在這裡即可讀到它的 session 與 token。</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Antigravity</legend>
+        <label class="row check"><input type="checkbox" name="quotaProbe" /> 讀取模型配額（實驗性）</label>
+        <p class="hint">開啟後，會從本機執行中的 Antigravity language server 程序參數讀取它的 CSRF token，只向 127.0.0.1 查詢目前登入帳號的模型剩餘配額。不會連到外部，也不會儲存 token。</p>
+        <label class="col">資料目錄（每行一個，留空＝自動偵測）
+          <textarea name="agDataDirs" rows="2" placeholder="C:\Users\you\.gemini\antigravity"></textarea>
+        </label>
+      </fieldset>
+      <p class="hint" id="settings-file"></p>
+      <div class="dialog-actions">
+        <button class="btn" value="cancel" formnovalidate>取消</button>
+        <button class="btn primary" value="save" id="settings-save">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

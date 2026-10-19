@@ -1,0 +1,17 @@
+{
+  "name": "aiag-dashboard",
+  "version": "0.1.0",
+  "description": "AI Agent Dashboard: Claude (multi-account) + Antigravity usage and status",
+  "main": "src/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "check": "node scripts/check-collectors.js"
+  },
+  "dependencies": {
+    "sql.js": "1.13.0"
+  },
+  "devDependencies": {
+    "electron": "38.2.0"
+  }
+}
