@@ -152,7 +152,12 @@ function createAccount(name, existing = []) {
   let dir = path.join(ACCOUNTS_ROOT, base);
   for (let n = 2; fs.existsSync(dir) || existing.some((a) => path.resolve(a.dir) === dir); n++) dir = path.join(ACCOUNTS_ROOT, `${base}-${n}`);
   fs.mkdirSync(dir, { recursive: true });
-  return { id: crypto.randomBytes(6).toString('hex'), name: String(name).trim() || base, dir };
+  return { id: crypto.randomBytes(6).toString('hex'), name: String(name).trim() || base, type: 'code', dir };
+}
+
+/** Account used only on claude.ai / the Claude desktop app (no Claude Code, e.g. the free plan): nothing to sign in to here. */
+function createWebAccount(name, accountUuid) {
+  return { id: crypto.randomBytes(6).toString('hex'), name: String(name || '').trim() || 'Claude', type: 'web', accountUuid: accountUuid || null };
 }
 
 /** Use an existing CLAUDE_CONFIG_DIR folder as an account. */
@@ -188,4 +193,4 @@ function shellCommand(account) {
   return `CLAUDE_CONFIG_DIR=${shQuote(account.dir)} claude`;
 }
 
-module.exports = { ACCOUNTS_ROOT, findClaudeCli, createAccount, accountFromFolder, loginAccount, logoutAccount, openClaude, shellCommand, profileEnv };
+module.exports = { ACCOUNTS_ROOT, findClaudeCli, createAccount, createWebAccount, accountFromFolder, loginAccount, logoutAccount, openClaude, shellCommand, profileEnv };

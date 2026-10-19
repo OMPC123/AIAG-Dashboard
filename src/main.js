@@ -18,6 +18,8 @@ let localSnapshot = null;
 let shareStatus = { running: false };
 let collecting = false;
 let t = I18N.create('en');
+// Time "Sign in" was last clicked is stored on the account (lastLoginAttempt), so the UI can explain a
+// sign-in that never completed, even after a restart.
 
 // Pin the settings folder: Electron derives it from productName, which would move it between dev and packaged builds.
 app.setPath('userData', path.join(app.getPath('appData'), 'aiag-dashboard'));
@@ -162,9 +164,6 @@ async function collect() {
       if (s.claude.enabled) for (const a of r.snap.claude || []) claude.push({ ...tag(a, name, r.snap.at), remote: true, stale });
       if (s.antigravity.enabled) for (const g of r.snap.antigravity || []) antigravity.push({ ...tag(g, name, r.snap.at), remote: true, stale });
     }
-    // An account seen locally only as an empty desktop-app entry is shown by the machine that actually uses it.
-    const remoteIds = new Set(claude.filter((a) => a.remote).map((a) => a.id));
-    claude = claude.filter((a) => a.remote || !remoteIds.has(a.id) || a.plan || a.counts.total > 0);
     // Number unnamed accounts across all machines, then apply this machine's display names.
     let n = 0;
     for (const a of claude) {
@@ -172,9 +171,29 @@ async function collect() {
       if (s.claude.labels[a.id]) a.label = s.claude.labels[a.id];
     }
     for (const g of antigravity) if (s.antigravity.labels[g.id]) g.label = s.antigravity.labels[g.id];
+    const signedIn = new Set(claude.filter((a) => a.account && a.loggedIn).map((a) => a.account.id));
+    if (s.claude.accounts.some((a) => signedIn.has(a.id) && a.lastLoginAttempt)) {
+      settings.value.claude.accounts = s.claude.accounts.map((a) => (signedIn.has(a.id) ? { ...a, lastLoginAttempt: undefined } : a));
+      settings.write();
+    }
+    // Settings -> Accounts lists this machine's accounts, including ones hidden or merged below.
+    const allClaude = [...claude];
+    const allAg = [...antigravity];
+
+    // An account seen here only as an empty desktop-app entry is shown by the machine that actually uses it,
+    // carrying over the name / account type given to it here.
+    const localEmpty = new Map(claude.filter((a) => !a.remote && !a.plan && !a.counts.total).map((a) => [a.id, a]));
+    const remoteIds = new Set(claude.filter((a) => a.remote).map((a) => a.id));
+    for (const a of claude) {
+      const mine = a.remote && localEmpty.get(a.id);
+      if (!mine) continue;
+      if (mine.account || s.claude.labels[a.id]) a.label = mine.label;
+      const seen = Math.max(a.desktopLastSeen || 0, mine.desktopLastSeen || 0);
+      if (seen) a.desktopLastSeen = seen;
+      if (mine.account && mine.account.type === 'web') a.account = mine.account;
+    }
+    claude = claude.filter((a) => a.remote || !remoteIds.has(a.id) || !localEmpty.has(a.id));
     // Accounts the user chose to hide (Settings -> Accounts).
-    const allClaude = claude;
-    const allAg = antigravity;
     claude = claude.filter((a) => !s.claude.hidden.includes(a.id));
     antigravity = antigravity.filter((g) => !s.antigravity.hidden.includes(g.id));
 
@@ -303,6 +322,7 @@ function settingsPayload() {
     share: shareStatus,
     code: shareCode(),
     cli: Accounts.findClaudeCli(settings.value.claude.cliPath),
+    loginAttempts: Object.fromEntries(settings.value.claude.accounts.filter((a) => a.lastLoginAttempt).map((a) => [a.id, a.lastLoginAttempt])),
     accountsRoot: Accounts.ACCOUNTS_ROOT,
   };
 }
@@ -360,12 +380,28 @@ app.whenReady().then(() => {
       return { ok: false, error: e.code || e.message, payload: settingsPayload() };
     }
   };
-  ipcMain.handle('accounts:add', accountAction(({ name, login }) => {
-    const account = Accounts.createAccount(name, settings.value.claude.accounts);
+  ipcMain.handle('accounts:add', accountAction(({ name, login, type, accountUuid }) => {
+    const account = type === 'web'
+      ? Accounts.createWebAccount(name, accountUuid)
+      : Accounts.createAccount(name, settings.value.claude.accounts);
+    if (login && account.type !== 'web') {
+      Accounts.loginAccount(account, settings.value.claude.cliPath);
+      account.lastLoginAttempt = Date.now();
+    }
     settings.patch({ claude: { accounts: [...settings.value.claude.accounts, account] } });
-    if (login) Accounts.loginAccount(account, settings.value.claude.cliPath);
     collect();
     return { account };
+  }));
+  const updateAccount = (id, fn) => {
+    settings.value.claude = { ...settings.value.claude, accounts: settings.value.claude.accounts.map((a) => (a.id === id ? fn({ ...a }) : a)) };
+    settings.write();
+    collect();
+  };
+  // web account <-> the account the Claude desktop app signed in to
+  ipcMain.handle('accounts:link', accountAction(({ id, accountUuid }) => updateAccount(id, (a) => ({ ...a, accountUuid: accountUuid || null }))));
+  // A Claude Code sign-in that can't work (e.g. free plan): keep the account, tracked through the desktop app.
+  ipcMain.handle('accounts:convertToWeb', accountAction((id) => {
+    updateAccount(id, (a) => ({ id: a.id, name: a.name, type: 'web', accountUuid: null }));
   }));
   ipcMain.handle('accounts:addFolder', accountAction(async () => {
     const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'showHiddenFiles', 'createDirectory'], defaultPath: os.homedir() });
@@ -377,7 +413,10 @@ app.whenReady().then(() => {
     collect();
     return { account };
   }));
-  ipcMain.handle('accounts:login', accountAction((id) => void Accounts.loginAccount(findAccount(id), settings.value.claude.cliPath)));
+  ipcMain.handle('accounts:login', accountAction((id) => {
+    Accounts.loginAccount(findAccount(id), settings.value.claude.cliPath);
+    updateAccount(id, (a) => ({ ...a, lastLoginAttempt: Date.now() }));
+  }));
   ipcMain.handle('accounts:logout', accountAction((id) => void Accounts.logoutAccount(findAccount(id), settings.value.claude.cliPath)));
   ipcMain.handle('accounts:open', accountAction((id) => void Accounts.openClaude(findAccount(id), settings.value.claude.cliPath)));
   ipcMain.handle('accounts:copyCommand', accountAction((id) => void clipboard.writeText(Accounts.shellCommand(findAccount(id)))));

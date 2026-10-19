@@ -52,7 +52,14 @@ npm start
 
 「設定 → 帳號」列出這台電腦上的所有帳號。每個帳號都可以改名、在 Dashboard 上隱藏，也可以新增帳號。
 
-**新增 Claude 帳號**：輸入名稱（例如「工作」），按「新增並登入」。Dashboard 會為這個帳號建立獨立的 Claude Code 設定資料夾（`~/.claude-accounts/<名稱>`），並在終端機視窗開啟官方的 Claude Code 登入（`claude auth login`），你在瀏覽器中完成登入即可。Dashboard 不會看到你的密碼或 token；登入資料由 Claude Code 存在該資料夾裡（macOS 則存在鑰匙圈）。
+**Claude 帳號分兩種**（新增時擇一）：
+
+- **Claude Code 帳號**：Pro、Max，或含 Claude Code 的 Team／Enterprise 席次。會顯示 session、token 和工作狀態；如果 Claude 桌面版也登入了這個帳號，還會顯示方案用量 %。
+- **網頁／桌面版帳號**：免費方案，或任何沒有 Claude Code 的帳號。不需要在 Dashboard 登入：先在 Claude 桌面版登入這個帳號，新增時從清單選擇它即可。免費方案官方不提供用量 %，所以卡片只會顯示它最後一次在桌面版使用的時間。
+
+如果 Claude Code 登入沒有完成（例如帳號其實沒有 Claude Code 使用權），該帳號會顯示說明，並提供「改成網頁／桌面版帳號」按鈕。
+
+**新增 Claude Code 帳號**：輸入名稱（例如「工作」），按「新增並登入」。Dashboard 會為這個帳號建立獨立的 Claude Code 設定資料夾（`~/.claude-accounts/<名稱>`），並在終端機視窗開啟官方的 Claude Code 登入（`claude auth login`），你在瀏覽器中完成登入即可。Dashboard 不會看到你的密碼或 token；登入資料由 Claude Code 存在該資料夾裡（macOS 則存在鑰匙圈）。
 
 每個新增的帳號都有這些按鈕：
 

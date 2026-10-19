@@ -12,7 +12,9 @@ contextBridge.exposeInMainWorld('dashboard', {
   openPath: (p) => ipcRenderer.invoke('open:path', p),
   openUrl: (u) => ipcRenderer.invoke('open:url', u),
   accounts: {
-    add: (name, login) => ipcRenderer.invoke('accounts:add', { name, login }),
+    add: (name, login, type, accountUuid) => ipcRenderer.invoke('accounts:add', { name, login, type, accountUuid }),
+    link: (id, accountUuid) => ipcRenderer.invoke('accounts:link', { id, accountUuid }),
+    convertToWeb: (id) => ipcRenderer.invoke('accounts:convertToWeb', id),
     addFolder: () => ipcRenderer.invoke('accounts:addFolder'),
     login: (id) => ipcRenderer.invoke('accounts:login', id),
     logout: (id) => ipcRenderer.invoke('accounts:logout', id),

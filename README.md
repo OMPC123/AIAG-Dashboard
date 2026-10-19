@@ -52,7 +52,14 @@ Shortcuts for later: double-click `AIAG Dashboard.bat` (Windows) or `AIAG Dashbo
 
 *Settings → Accounts* lists every account on this computer. You can rename it, hide it from the dashboard, or add a new one.
 
-**Add a Claude account**: type a name (e.g. “Work”) and click **Add and sign in**. The dashboard creates a separate Claude Code profile folder for it (`~/.claude-accounts/<name>`) and opens the official Claude Code sign-in (`claude auth login`) in a terminal window; you finish signing in in your browser. The dashboard never sees your password or tokens; Claude Code stores the sign-in in that folder (on macOS, in the Keychain).
+**Two kinds of Claude account** (pick one when adding):
+
+- **Claude Code account**: Pro, Max, or a Team / Enterprise seat that includes Claude Code. Shows sessions, tokens and working status (and plan % if the desktop app is signed in to it).
+- **Web / desktop-app account**: the free plan, or any account without Claude Code. There is nothing to sign in to in the dashboard: sign in to the account in the Claude desktop app, then pick it from the list when adding. Claude does not report usage % for the free plan, so its card shows when it was last used in the desktop app.
+
+If a Claude Code sign-in does not complete (for example, the account turns out to have no Claude Code access), the account shows an explanation with a **Switch to web / desktop-app account** button.
+
+**Add a Claude Code account**: type a name (e.g. “Work”) and click **Add and sign in**. The dashboard creates a separate Claude Code profile folder for it (`~/.claude-accounts/<name>`) and opens the official Claude Code sign-in (`claude auth login`) in a terminal window; you finish signing in in your browser. The dashboard never sees your password or tokens; Claude Code stores the sign-in in that folder (on macOS, in the Keychain).
 
 For each added account:
 

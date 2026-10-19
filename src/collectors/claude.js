@@ -120,7 +120,9 @@ function configDirs(settings = {}) {
     if (dirs.some((x) => x.dir.toLowerCase() === dir.toLowerCase())) return;
     dirs.push({ dir, claudeJson: path.join(dir, '.claude.json'), account });
   };
-  for (const a of settings.accounts || []) add(a.dir, { id: a.id, name: a.name, dir: path.resolve(a.dir) });
+  for (const a of settings.accounts || []) {
+    if (a.type !== 'web' && a.dir) add(a.dir, { id: a.id, name: a.name, type: 'code', dir: path.resolve(a.dir) });
+  }
   for (const d of settings.extraConfigDirs || []) add(d, null);
   return dirs;
 }
@@ -163,8 +165,12 @@ function desktopSessions() {
 function planUsage(sinceMs) {
   const j = readJson(path.join(DESKTOP_DIR, 'plan-usage-history.json'));
   const byOrg = new Map();
+  const lastSeen = new Map(); // org -> last time the desktop app checked usage while signed in to it
   for (const s of (j && j.samples) || []) {
-    if (!s || !s.org || !s.u || !Object.keys(s.u).length) continue;
+    if (!s || !s.org) continue;
+    if (s.t > (lastSeen.get(s.org) || 0)) lastSeen.set(s.org, s.t);
+    // Empty samples: signed in, but Claude reported no usage limits (e.g. the free plan).
+    if (!s.u || !Object.keys(s.u).length) continue;
     if (!byOrg.has(s.org)) byOrg.set(s.org, []);
     byOrg.get(s.org).push({ t: s.t, fiveHour: s.u.fh, sevenDay: s.u.sd });
   }
@@ -173,6 +179,7 @@ function planUsage(sinceMs) {
     list.sort((a, b) => a.t - b.t);
     result.set(org, { latest: list[list.length - 1], history: list.filter((x) => x.t >= sinceMs) });
   }
+  result.lastSeen = lastSeen;
   return result;
 }
 
@@ -223,6 +230,7 @@ function collectClaude(settings = {}) {
   const desktop = desktopSessions();
   const usage = planUsage(sinceMs);
   const cliToAccount = new Map(desktop.sessions.map((s) => [s.cliSessionId, s.accountUuid]));
+  const webAccounts = (settings.accounts || []).filter((a) => a.type === 'web');
   const desktopByCli = new Map(desktop.sessions.map((s) => [s.cliSessionId, s]));
 
   const accounts = new Map();
@@ -311,6 +319,13 @@ function collectClaude(settings = {}) {
     }
   }
 
+  // Accounts used only on claude.ai / the desktop app (no Claude Code, e.g. the free plan).
+  for (const w of webAccounts) {
+    const meta = { id: w.id, name: w.name, type: 'web', accountUuid: w.accountUuid || null };
+    const target = w.accountUuid ? ensure(w.accountUuid, desktop.accounts.get(w.accountUuid)) : ensure(`account:${w.id}`);
+    target.account = meta;
+  }
+
   // Desktop sessions that have no local transcript (e.g. other account, archived) still count as known sessions.
   for (const d of desktop.sessions) {
     const acct = ensure(d.accountUuid, d.orgUuid);
@@ -383,6 +398,10 @@ function collectClaude(settings = {}) {
       plan: plan
         ? { fiveHour: plan.latest.fiveHour, sevenDay: plan.latest.sevenDay, sampledAt: plan.latest.t, history: plan.history }
         : null,
+      // last time the Claude desktop app was signed in to this account here (it checks usage regularly)
+      desktopLastSeen: (a.orgUuid && usage.lastSeen.get(a.orgUuid)) || null,
+      // seen in the Claude desktop app on this computer
+      inDesktop: desktop.accounts.has(a.accountUuid),
       today: sumBuckets(emptyBucket(), a.hours, todayHour, Infinity),
       last5h: sumBuckets(emptyBucket(), a.hours, nowHour - 4, Infinity),
       daily,
