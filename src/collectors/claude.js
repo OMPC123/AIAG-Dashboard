@@ -237,7 +237,7 @@ function collectClaude(settings = {}) {
     return a;
   };
 
-  for (const [acct, org] of desktop.accounts) ensure(acct, org).sources.push('Claude 桌面版');
+  for (const [acct, org] of desktop.accounts) ensure(acct, org).sources.push('desktop');
 
   for (const { dir, claudeJson } of configDirs(settings.extraConfigDirs)) {
     if (!fs.existsSync(dir)) continue;
@@ -359,11 +359,12 @@ function collectClaude(settings = {}) {
       .sort((x, y) => rank(x.state) - rank(y.state) || y.lastActivity - x.lastActivity);
 
     const p = a.profile;
-    const fallbackName = `Claude 帳號 ${++idx}`;
+    idx += 1;
     out.push({
       id: a.accountUuid,
       kind: 'claude',
-      label: labels[a.accountUuid] || (p && (p.email || p.displayName)) || fallbackName,
+      label: labels[a.accountUuid] || (p && (p.email || p.displayName)) || null, // null -> UI shows "Claude account N"
+      ordinal: idx,
       profile: p,
       orgUuid: a.orgUuid,
       sources: a.sources,
@@ -390,4 +391,9 @@ function rank(state) {
   return { working: 0, idle: 1, ended: 2, archived: 3 }[state] ?? 4;
 }
 
-module.exports = { collectClaude, desktopDir, DESKTOP_DIR };
+/** Paths checked for Claude data; shown to the user when nothing is found. */
+function claudeSearchPaths(settings = {}) {
+  return [DESKTOP_DIR, ...configDirs(settings.extraConfigDirs).map((d) => d.dir)];
+}
+
+module.exports = { collectClaude, claudeSearchPaths, desktopDir, DESKTOP_DIR };

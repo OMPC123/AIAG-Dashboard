@@ -1,0 +1,33 @@
+# Push a tag like v0.2.0 to build installers for Windows, macOS and Linux.
+# They are attached to a *draft* GitHub release; review it and click "Publish" when ready.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Build and upload
+        run: npx electron-builder --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No paid code-signing certificates: Windows SmartScreen / macOS Gatekeeper will warn on first launch (see README).
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'

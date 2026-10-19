@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-TW">
+<html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -11,79 +11,102 @@
   <header class="topbar">
     <div class="brand">
       <span class="logo" aria-hidden="true"></span>
-      <div>
-        <h1>AIAG Dashboard</h1>
-        <p class="sub" id="updated">讀取中…</p>
+      <div class="brand-text">
+        <h1 data-i18n="appName">AIAG Dashboard</h1>
+        <p class="sub" id="updated" data-i18n="loading">…</p>
       </div>
     </div>
     <div class="actions">
-      <button class="btn" id="btn-refresh" title="立即重新整理">↻ 重新整理</button>
-      <button class="btn toggle" id="btn-pin" title="視窗置頂" aria-pressed="false">📌 置頂</button>
-      <button class="btn" id="btn-settings" title="設定">⚙ 設定</button>
+      <div class="seg" role="group" data-i18n-title="viewTitle">
+        <button class="seg-btn" data-view="compact" data-i18n="viewCompact" aria-pressed="false"></button>
+        <button class="seg-btn" data-view="full" data-i18n="viewFull" aria-pressed="true"></button>
+      </div>
+      <button class="btn icon" id="btn-refresh" data-i18n-title="refreshTitle" data-i18n-aria="refresh">↻</button>
+      <button class="btn icon toggle" id="btn-pin" data-i18n-title="pinTitle" data-i18n-aria="pin" aria-pressed="false">📌</button>
+      <button class="btn icon" id="btn-settings" data-i18n-title="settings" data-i18n-aria="settings">⚙</button>
     </div>
   </header>
 
   <main>
-    <section class="tiles" id="tiles" aria-label="總覽"></section>
+    <section class="tiles full-only" id="tiles"></section>
     <div id="errors"></div>
-    <section class="grid" id="accounts" aria-label="帳號"></section>
-    <section class="charts">
+    <div id="empty"></div>
+    <section id="compact" class="compact-only"></section>
+    <section class="grid full-only" id="accounts"></section>
+    <section class="charts full-only" id="daily-section">
       <article class="card wide">
-        <header class="card-h"><h2>Claude 每日輸出 tokens（近 14 天）</h2><div class="legend" id="daily-legend"></div></header>
+        <header class="card-h"><h2 data-i18n="dailyTitle"></h2><div class="legend" id="daily-legend"></div></header>
         <div class="chart" id="daily-chart"></div>
-        <details class="table-view"><summary>表格檢視</summary><div id="daily-table"></div></details>
+        <details class="table-view"><summary data-i18n="tableView"></summary><div id="daily-table"></div></details>
       </article>
     </section>
   </main>
 
   <dialog id="settings">
-    <form method="dialog" id="settings-form">
-      <h2>設定</h2>
-      <label class="row">更新間隔（秒）<input type="number" min="3" max="600" name="refreshSeconds" /></label>
-      <label class="row check"><input type="checkbox" name="closeToTray" /> 關閉視窗時縮到系統匣</label>
-      <label class="row">這台電腦的名稱<input type="text" name="machineName" /></label>
+    <form id="settings-form">
+      <h2 data-i18n="sTitle"></h2>
 
       <fieldset>
-        <legend>多台電腦</legend>
-        <label class="row check"><input type="checkbox" name="shareEnabled" /> 分享這台電腦的資料給區網內其他電腦（唯讀）</label>
-        <label class="row">連接埠<input type="number" min="1024" max="65535" name="sharePort" /></label>
-        <label class="col">存取 token（另一台電腦需要填入）
-          <span style="display:flex;gap:6px"><input type="text" name="shareToken" readonly style="flex:1;font-family:Menlo,Consolas,monospace" />
-          <button type="button" class="btn" id="share-copy">複製</button><button type="button" class="btn" id="share-newtoken">重新產生</button></span>
-        </label>
-        <p class="hint" id="share-status"></p>
-        <label class="col">要讀取的其他電腦（每行：名稱 | 網址 | token）
-          <textarea name="remotes" rows="3" placeholder="辦公室電腦 | http://192.168.1.20:47821 | xxxxxxxx"></textarea>
-        </label>
-        <p class="hint">在第二台電腦也執行這個 Dashboard 並開啟「分享」，再把它顯示的網址與 token 填到這裡。第一次開啟分享時，Windows 防火牆會詢問是否允許，請允許「私人網路」。</p>
+        <legend data-i18n="sGeneral"></legend>
+        <label class="row"><span data-i18n="sLanguage"></span><select name="language" id="lang-select"></select></label>
+        <label class="row"><span data-i18n="sRefresh"></span><input type="number" min="3" max="600" name="refreshSeconds" /></label>
+        <label class="row"><span data-i18n="sMachineName"></span><input type="text" name="machineName" /></label>
+        <label class="row check"><input type="checkbox" name="closeToTray" /> <span data-i18n="sCloseToTray"></span></label>
       </fieldset>
 
       <fieldset>
-        <legend>Claude</legend>
+        <legend data-i18n="sSources"></legend>
+        <label class="row check"><input type="checkbox" name="claudeEnabled" /> <span data-i18n="sClaudeOn"></span></label>
         <div id="label-fields"></div>
-        <label class="col">額外的 Claude Code 設定目錄（CLAUDE_CONFIG_DIR，每行一個）
-          <textarea name="extraConfigDirs" rows="3" placeholder="C:\Users\you\.claude-account2"></textarea>
-        </label>
-        <p class="hint">第二個帳號若是用另一個 CLAUDE_CONFIG_DIR 登入 Claude Code CLI，把該目錄加在這裡即可讀到它的 session 與 token。</p>
+        <label class="row check"><input type="checkbox" name="agEnabled" /> <span data-i18n="sAgOn"></span></label>
+        <label class="row check"><input type="checkbox" name="quotaProbe" /> <span data-i18n="sQuota"></span></label>
+        <p class="hint" data-i18n="sQuotaHint"></p>
+        <details>
+          <summary data-i18n="sAdvanced"></summary>
+          <label class="col"><span data-i18n="sExtraDirs"></span>
+            <textarea name="extraConfigDirs" rows="2" id="extra-dirs"></textarea>
+          </label>
+          <p class="hint" data-i18n="sExtraDirsHint"></p>
+          <label class="col"><span data-i18n="sAgDirs"></span>
+            <textarea name="agDataDirs" rows="2" id="ag-dirs"></textarea>
+          </label>
+        </details>
       </fieldset>
 
       <fieldset>
-        <legend>Antigravity</legend>
-        <label class="row check"><input type="checkbox" name="quotaProbe" /> 讀取模型配額（實驗性）</label>
-        <p class="hint">開啟後，會從本機執行中的 Antigravity language server 程序參數讀取它的 CSRF token，只向 127.0.0.1 查詢目前登入帳號的模型剩餘配額。不會連到外部，也不會儲存 token。</p>
-        <label class="col">資料目錄（每行一個，留空＝自動偵測）
-          <textarea name="agDataDirs" rows="2" placeholder="C:\Users\you\.gemini\antigravity"></textarea>
-        </label>
+        <legend data-i18n="sMulti"></legend>
+        <label class="row check"><input type="checkbox" name="shareEnabled" /> <span data-i18n="sShare"></span></label>
+        <div id="share-box">
+          <label class="row"><span data-i18n="sPort"></span><input type="number" min="1024" max="65535" name="sharePort" /></label>
+          <p class="hint" id="share-status"></p>
+          <label class="col"><span data-i18n="sCode"></span>
+            <span class="inline"><input type="text" id="share-code" readonly class="mono" />
+              <button type="button" class="btn" id="share-copy" data-i18n="sCopy"></button>
+              <button type="button" class="btn" id="share-regen" data-i18n="sRegen"></button></span>
+          </label>
+          <p class="hint" data-i18n="sRegenHint"></p>
+          <p class="hint" id="firewall-hint"></p>
+        </div>
+        <div class="col">
+          <span data-i18n="sRemotes"></span>
+          <ul class="remote-list" id="remote-list"></ul>
+          <span class="inline"><input type="text" id="remote-input" class="mono" data-i18n-placeholder="sRemotePaste" />
+            <button type="button" class="btn" id="remote-add" data-i18n="sRemoteAdd"></button></span>
+          <p class="hint error" id="remote-error" hidden></p>
+        </div>
       </fieldset>
+
       <p class="hint" id="settings-file"></p>
       <div class="dialog-actions">
-        <button class="btn" value="cancel" formnovalidate>取消</button>
-        <button class="btn primary" value="save" id="settings-save">儲存</button>
+        <button type="button" class="btn" id="settings-cancel" data-i18n="sCancel"></button>
+        <button type="submit" class="btn primary" data-i18n="sSave"></button>
       </div>
     </form>
   </dialog>
 
   <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+  <div class="toast" id="toast" role="status" hidden></div>
+  <script src="../i18n.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

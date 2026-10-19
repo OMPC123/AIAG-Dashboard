@@ -5,7 +5,9 @@ contextBridge.exposeInMainWorld('dashboard', {
   refresh: () => ipcRenderer.invoke('refresh'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (s) => ipcRenderer.invoke('settings:save', s),
-  setAlwaysOnTop: (on) => ipcRenderer.invoke('window:alwaysOnTop', on),
-  openPath: (p) => ipcRenderer.invoke('open:path', p),
+  patchSettings: (p) => ipcRenderer.invoke('settings:patch', p),
   newShareToken: () => ipcRenderer.invoke('share:newToken'),
+  parseRemote: (text) => ipcRenderer.invoke('remote:parse', text),
+  copy: (text) => ipcRenderer.invoke('clipboard:write', text),
+  openPath: (p) => ipcRenderer.invoke('open:path', p),
 });

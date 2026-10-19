@@ -1,11 +1,31 @@
-/* global dashboard */
+/* global dashboard, I18N */
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const SERIES = ['var(--series-1)', 'var(--series-2)', 'var(--series-4)'];
 const AG_COLOR = 'var(--series-3)';
 
 let snapshot = null;
-let settings = null;
+let prefs = null; // settings payload from main: { value, lang, platform, ... }
+let t = I18N.create('en');
+
+// ---------- i18n ----------
+function applyStaticText() {
+  document.documentElement.lang = t.lang;
+  document.querySelectorAll('[data-i18n]').forEach((el) => (el.textContent = t(el.dataset.i18n)));
+  document.querySelectorAll('[data-i18n-title]').forEach((el) => (el.title = t(el.dataset.i18nTitle)));
+  document.querySelectorAll('[data-i18n-aria]').forEach((el) => el.setAttribute('aria-label', t(el.dataset.i18nAria)));
+  document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => (el.placeholder = t(el.dataset.i18nPlaceholder)));
+}
+/** errors arrive as { key, vars } / { text } (or plain strings from older versions on other machines) */
+function errText(e) {
+  if (!e) return '';
+  if (typeof e === 'string') return e;
+  if (e.key) {
+    const vars = e.cause ? { ...e.vars, e: errText(e.cause) } : e.vars;
+    return t(e.key, vars) + (e.stale ? t('err_remoteStale') : '');
+  }
+  return e.text || '';
+}
 
 // ---------- formatting ----------
 function fmt(n) {
@@ -18,32 +38,34 @@ function fmt(n) {
 function rel(ts) {
   if (!ts) return '—';
   const s = Math.round((Date.now() - ts) / 1000);
-  if (s < 0) return '剛剛';
-  if (s < 60) return `${s} 秒前`;
-  if (s < 3600) return `${Math.floor(s / 60)} 分鐘前`;
-  if (s < 86400) return `${Math.floor(s / 3600)} 小時前`;
-  return `${Math.floor(s / 86400)} 天前`;
+  if (s < 5) return t('justNow');
+  if (s < 60) return t('secAgo', { n: s });
+  if (s < 3600) return t('minAgo', { n: Math.floor(s / 60) });
+  if (s < 86400) return t('hourAgo', { n: Math.floor(s / 3600) });
+  return t('dayAgo', { n: Math.floor(s / 86400) });
 }
 function until(ts) {
   if (!ts) return '';
   const m = Math.round((ts - Date.now()) / 60000);
-  if (m <= 0) return '即將重置';
-  if (m < 60) return `${m} 分鐘後重置`;
-  if (m < 1440) return `${Math.floor(m / 60)} 小時 ${m % 60} 分後重置`;
-  return `${Math.floor(m / 1440)} 天後重置`;
+  if (m <= 0) return t('resetSoon');
+  if (m < 60) return t('resetInMin', { m });
+  if (m < 1440) return t('resetInHour', { h: Math.floor(m / 60), m: m % 60 });
+  return t('resetInDay', { d: Math.floor(m / 1440) });
 }
-const STATE_LABEL = { working: '工作中', idle: '閒置', waiting: '等待輸入', error: '錯誤', ended: '已結束', archived: '已封存', off: '未啟動' };
-const stateTag = (st) => `<span class="state ${st}"><i></i>${STATE_LABEL[st] || st}</span>`;
+const stateTag = (st) => `<span class="state ${st}"><i></i>${esc(t('st_' + st))}</span>`;
 function level(pct) {
-  if (pct >= 95) return ['critical', '⛔ 將達上限'];
-  if (pct >= 80) return ['serious', '▲ 偏高'];
-  if (pct >= 60) return ['warning', '● 注意'];
-  return ['good', '✓ 正常'];
+  const cls = pct >= 95 ? 'critical' : pct >= 80 ? 'serious' : pct >= 60 ? 'warning' : 'good';
+  return [cls, t('lv_' + cls)];
 }
-const machineTag = (x) => `<span class="machine${x.remote ? ' remote' : ''}${x.stale ? ' stale' : ''}" title="${x.stale ? '目前連不到，顯示的是 ' + rel(x.collectedAt) + ' 的資料' : '資料來源電腦'}">💻 ${esc(x.machine)}${x.stale ? ' · 離線' : ''}</span> `;
+const accountName = (a) => a.label || t('claudeAccountN', { n: a.ordinal || 1 });
+const machineTag = (x) =>
+  `<span class="machine${x.remote ? ' remote' : ''}${x.stale ? ' stale' : ''}" title="${esc(x.stale ? t('staleTitle', { when: rel(x.collectedAt) }) : t('machineTitle'))}">💻 ${esc(x.machine)}${x.stale ? ' · ' + esc(t('offline')) : ''}</span>`;
 const shortModel = (m) => (m || '').replace(/^claude-/, '').replace(/-\d{8}$/, '');
+const dateTime = (ms, opts) => new Date(ms).toLocaleString(t.lang, opts);
+const claudeState = (a) => (a.counts.working ? 'working' : a.counts.idle ? 'idle' : 'off');
+const agState = (g) => (!g.appRunning ? 'off' : g.counts.working ? 'working' : 'idle');
 
-// ---------- tooltip ----------
+// ---------- tooltip & toast ----------
 const tip = $('#tooltip');
 function showTip(evt, html) {
   tip.innerHTML = html;
@@ -58,6 +80,14 @@ function showTip(evt, html) {
 const hideTip = () => (tip.hidden = true);
 function tipRows(title, rows) {
   return `<div class="tt-h">${esc(title)}</div>` + rows.map((r) => `<div class="tt-r"><span>${r.color ? `<i class="chip" style="background:${r.color};width:8px;height:8px"></i>` : ''}${esc(r.name)}</span><b class="num">${esc(r.value)}</b></div>`).join('');
+}
+let toastTimer;
+function toast(msg) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (el.hidden = true), 1800);
 }
 
 // ---------- charts (hand-rolled SVG, one y-axis) ----------
@@ -83,10 +113,7 @@ function barChart(el, { categories, series, height = 160, yFmt = fmt, tickEvery 
   const bw = (groupW - 2 * (series.length - 1)) / series.length;
   const y = (v) => T + ih - (v / max) * ih;
   let g = '<g class="grid">';
-  for (let i = 0; i <= 4; i++) {
-    const v = (max / 4) * i, yy = y(v);
-    g += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}"/>`;
-  }
+  for (let i = 0; i <= 4; i++) g += `<line x1="${L}" x2="${W - R}" y1="${y((max / 4) * i)}" y2="${y((max / 4) * i)}"/>`;
   g += '</g><g class="axis">';
   for (let i = 0; i <= 4; i++) g += `<text x="${L - 6}" y="${y((max / 4) * i) + 4}" text-anchor="end">${yFmt((max / 4) * i)}</text>`;
   categories.forEach((c, i) => {
@@ -99,8 +126,7 @@ function barChart(el, { categories, series, height = 160, yFmt = fmt, tickEvery 
     const gx = L + band * i + (band - groupW) / 2;
     series.forEach((s, j) => {
       const v = s.values[i] || 0;
-      const x = gx + j * (bw + 2);
-      marks += `<path class="mark" data-i="${i}" fill="${s.color}" d="${roundedTopBar(x, y(v), bw, T + ih - y(v), 4)}"/>`;
+      marks += `<path class="mark" data-i="${i}" fill="${s.color}" d="${roundedTopBar(gx + j * (bw + 2), y(v), bw, T + ih - y(v), 4)}"/>`;
     });
     hits += `<rect class="hit" data-i="${i}" x="${L + band * i}" y="${T}" width="${band}" height="${ih}"/>`;
   });
@@ -108,7 +134,7 @@ function barChart(el, { categories, series, height = 160, yFmt = fmt, tickEvery 
   el.querySelectorAll('.hit').forEach((h) => {
     const i = Number(h.dataset.i);
     h.addEventListener('mousemove', (e) => {
-      el.querySelectorAll(`.mark`).forEach((m) => m.classList.toggle('hover', Number(m.dataset.i) === i));
+      el.querySelectorAll('.mark').forEach((m) => m.classList.toggle('hover', Number(m.dataset.i) === i));
       showTip(e, tipRows(tipTitle(i), series.map((s) => ({ name: s.name, value: yFmt(s.values[i] || 0), color: s.color }))));
     });
     h.addEventListener('mouseleave', () => {
@@ -122,16 +148,16 @@ function barChart(el, { categories, series, height = 160, yFmt = fmt, tickEvery 
 function percentLineChart(el, { series, from, to, height = 120 }) {
   const W = Math.max(280, el.clientWidth || 600), H = height, L = 36, R = 8, T = 8, B = 20;
   const iw = W - L - R, ih = H - T - B;
-  const x = (t) => L + ((t - from) / (to - from)) * iw;
+  const x = (tm) => L + ((tm - from) / (to - from)) * iw;
   const y = (v) => T + ih - (Math.min(100, Math.max(0, v)) / 100) * ih;
   let g = '<g class="grid">';
   for (const v of [0, 50, 100]) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>`;
   g += '</g><g class="axis">';
   for (const v of [0, 50, 100]) g += `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}%</text>`;
   const dayMs = 86400000;
-  for (let t = new Date(new Date(from).setHours(0, 0, 0, 0)).getTime() + dayMs; t < to; t += dayMs * 2) {
-    const d = new Date(t);
-    g += `<text x="${x(t)}" y="${H - 5}" text-anchor="middle">${d.getMonth() + 1}/${d.getDate()}</text>`;
+  for (let tm = new Date(new Date(from).setHours(0, 0, 0, 0)).getTime() + dayMs; tm < to; tm += dayMs * 2) {
+    const d = new Date(tm);
+    g += `<text x="${x(tm)}" y="${H - 5}" text-anchor="middle">${d.getMonth() + 1}/${d.getDate()}</text>`;
   }
   g += '</g>';
   let lines = '';
@@ -147,13 +173,13 @@ function percentLineChart(el, { series, from, to, height = 120 }) {
   hit.addEventListener('mousemove', (e) => {
     const rect = svg.getBoundingClientRect();
     const px = ((e.clientX - rect.left) / rect.width) * W;
-    const t = from + ((px - L) / iw) * (to - from);
+    const tm = from + ((px - L) / iw) * (to - from);
     const rows = [];
     let dots = '';
     let nearestT = null;
     for (const s of series) {
       let best = null;
-      for (const p of s.points) if (p.v != null && p.t <= t + (to - from) / iw * 6 && (!best || Math.abs(p.t - t) < Math.abs(best.t - t))) best = p;
+      for (const p of s.points) if (p.v != null && p.t <= tm + ((to - from) / iw) * 6 && (!best || Math.abs(p.t - tm) < Math.abs(best.t - tm))) best = p;
       if (!best) continue;
       nearestT = nearestT ?? best.t;
       rows.push({ name: s.name, value: `${best.v}%`, color: s.color });
@@ -163,7 +189,7 @@ function percentLineChart(el, { series, from, to, height = 120 }) {
     const cross = el.querySelector('.cross');
     cross.setAttribute('x1', x(nearestT)); cross.setAttribute('x2', x(nearestT)); cross.setAttribute('visibility', 'visible');
     el.querySelector('.dots').innerHTML = dots;
-    showTip(e, tipRows(new Date(nearestT).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }), rows));
+    showTip(e, tipRows(dateTime(nearestT, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }), rows));
   });
   hit.addEventListener('mouseleave', () => {
     el.querySelector('.cross').setAttribute('visibility', 'hidden');
@@ -172,135 +198,159 @@ function percentLineChart(el, { series, from, to, height = 120 }) {
   });
 }
 
-// ---------- rendering ----------
+// ---------- shared pieces ----------
+function bar(pct) {
+  if (pct == null) return '<div class="bar"><span style="width:0"></span></div>';
+  const [cls] = level(pct);
+  return `<div class="bar ${cls}" role="meter" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${Math.min(100, pct)}%"></span></div>`;
+}
 function meter(label, pct, sampledAt) {
-  if (pct == null) return `<div class="meter"><div class="row"><span>${label}</span><b>—</b></div><div class="bar"><span style="width:0"></span></div></div>`;
-  const [cls, txt] = level(pct);
-  return `<div class="meter"><div class="row"><span>${label}</span><b class="num">${pct}%</b></div>
-    <div class="bar ${cls}" role="meter" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${Math.min(100, pct)}%"></span></div>
-    <div class="row"><span>${txt}</span><span>${sampledAt ? '取樣於 ' + rel(sampledAt) : ''}</span></div></div>`;
+  if (pct == null) return `<div class="meter"><div class="row"><span>${esc(label)}</span><b>—</b></div>${bar(null)}</div>`;
+  const [, txt] = level(pct);
+  return `<div class="meter"><div class="row"><span>${esc(label)}</span><b class="num">${pct}%</b></div>${bar(pct)}
+    <div class="row"><span>${esc(txt)}</span><span>${sampledAt ? esc(t('sampled', { when: rel(sampledAt) })) : ''}</span></div></div>`;
+}
+/** Lowest remaining quota across Antigravity models (what limits you first). */
+function lowestQuota(g) {
+  const ms = g.quota && g.quota.models;
+  if (!ms || !ms.length) return null;
+  return ms.reduce((lo, m) => (m.remaining < lo.remaining ? m : lo));
 }
 
+// ---------- full view ----------
 function claudeCard(a, color) {
   const p = a.profile || {};
-  const st = a.counts.working ? 'working' : a.counts.idle ? 'idle' : 'off';
-  const meta = [p.orgName, p.billingType && p.billingType.replace(/_/g, ' '), a.orgUuid && `org ${a.orgUuid.slice(0, 8)}`].filter(Boolean).join(' · ');
+  const meta = [p.orgName, p.billingType && p.billingType.replace(/_/g, ' ')].filter(Boolean).join(' · ');
   const sessions = a.sessions.filter((s) => s.state !== 'archived').slice(0, 15);
   return `<article class="card${a.stale ? ' stale' : ''}" data-id="${esc(a.key)}">
     <header class="card-h">
       <div class="acct-title"><i class="chip" style="background:${color}"></i>
-        <div style="min-width:0"><h2 class="acct-name">${esc(a.label)}</h2><div class="acct-meta">${machineTag(a)}Claude · ${esc(meta)}</div></div></div>
-      <div style="display:flex;gap:8px;align-items:center">${stateTag(st)}<span class="badge">${a.counts.working} 工作 / ${a.counts.idle} 閒置</span></div>
+        <div style="min-width:0"><h2 class="acct-name">${esc(accountName(a))}</h2><div class="acct-meta">${machineTag(a)} Claude${meta ? ' · ' + esc(meta) : ''}</div></div></div>
+      <div class="card-state">${stateTag(claudeState(a))}<span class="badge">${esc(t('workIdleBadge', { w: a.counts.working, i: a.counts.idle }))}</span></div>
     </header>
-    <div class="section-label">方案用量</div>
-    ${a.plan ? `<div class="meters">${meter('5 小時視窗', a.plan.fiveHour, a.plan.sampledAt)}${meter('7 天視窗', a.plan.sevenDay)}</div>
+    <div class="section-label">${esc(t('planUsage'))}</div>
+    ${a.plan ? `<div class="meters">${meter(t('window5h'), a.plan.fiveHour, a.plan.sampledAt)}${meter(t('window7d'), a.plan.sevenDay)}</div>
       <div class="chart plan-chart" style="margin-top:10px"></div>
-      <div class="legend"><span><i style="background:${color}"></i>5 小時 %（實線）</span><span><i style="background:${color};opacity:.55"></i>7 天 %（虛線）</span></div>`
-      : '<p class="empty">尚無方案用量資料 — 在 Claude 桌面版切換到此帳號並開啟用量面板後會自動記錄。</p>'}
-    <div class="section-label">今日 tokens（${esc(a.machine)} 的 Claude Code 紀錄）</div>
+      <div class="legend"><span><i style="background:${color}"></i>${esc(t('legend5h'))}</span><span><i style="background:${color};opacity:.55"></i>${esc(t('legend7d'))}</span></div>`
+      : `<p class="empty">${esc(t('noPlan'))}</p>`}
+    <div class="section-label">${esc(t('todayTokens', { machine: a.machine }))}</div>
     <div class="stats">
-      <div class="stat"><div class="k">輸出</div><div class="v num">${fmt(a.today.output)}</div></div>
-      <div class="stat"><div class="k">輸入</div><div class="v num">${fmt(a.today.input)}</div></div>
-      <div class="stat"><div class="k">快取讀取</div><div class="v num">${fmt(a.today.cacheRead)}</div></div>
-      <div class="stat"><div class="k">快取寫入</div><div class="v num">${fmt(a.today.cacheWrite)}</div></div>
+      <div class="stat"><div class="k">${esc(t('tokOut'))}</div><div class="v num">${fmt(a.today.output)}</div></div>
+      <div class="stat"><div class="k">${esc(t('tokIn'))}</div><div class="v num">${fmt(a.today.input)}</div></div>
+      <div class="stat"><div class="k">${esc(t('tokCacheR'))}</div><div class="v num">${fmt(a.today.cacheRead)}</div></div>
+      <div class="stat"><div class="k">${esc(t('tokCacheW'))}</div><div class="v num">${fmt(a.today.cacheWrite)}</div></div>
     </div>
-    <div class="note">近 5 小時：輸出 ${fmt(a.last5h.output)} · ${a.last5h.messages} 次回應　今日 ${a.today.messages} 次回應</div>
-    <div class="section-label">近 24 小時輸出 tokens</div>
+    <div class="note">${esc(t('last5hNote', { out: fmt(a.last5h.output), msgs: a.last5h.messages, today: a.today.messages }))}</div>
+    <div class="section-label">${esc(t('hourlyOut'))}</div>
     <div class="chart hourly-chart"></div>
-    <div class="section-label">Sessions（${a.counts.total}）</div>
+    <div class="section-label">${esc(t('sessions', { n: a.counts.total }))}</div>
     ${sessions.length ? `<ul class="list" data-scroll="${esc(a.key)}">${sessions.map((s) => `<li>
       ${stateTag(s.state)}<span class="t" title="${esc(s.cwd)}">${esc(s.title || s.sessionId.slice(0, 8))}</span>
-      <span class="r num" title="累計輸出 tokens">${fmt(s.tokens.output)}</span>
-      <span class="m">${esc([s.project, shortModel(s.model), s.subagents ? `${s.subagents} 個子代理` : null, rel(s.lastActivity)].filter(Boolean).join(' · '))}</span>
-    </li>`).join('')}</ul>` : `<p class="empty">「${esc(a.machine)}」上沒有此帳號的 session 紀錄。</p>`}
+      <span class="r num" title="${esc(t('sessionTokTitle'))}">${fmt(s.tokens.output)}</span>
+      <span class="m">${esc([s.project, shortModel(s.model), s.subagents ? t('subagents', { n: s.subagents }) : null, rel(s.lastActivity)].filter(Boolean).join(' · '))}</span>
+    </li>`).join('')}</ul>` : `<p class="empty">${esc(t('noSessions', { machine: a.machine }))}</p>`}
   </article>`;
 }
 
-function agCard(g) {
-  const st = !g.appRunning ? 'off' : g.counts.working ? 'working' : 'idle';
-  const q = g.quota;
-  let quotaHtml;
-  if (q && q.models.length) {
-    quotaHtml = `<div class="meters">${q.models.map((m) => {
-      const used = Math.round((1 - m.remaining) * 100);
-      const [cls] = level(used);
-      return `<div class="meter"><div class="row"><span title="${esc(m.label)}">${esc(m.label)}</span><b class="num">剩 ${Math.round(m.remaining * 100)}%</b></div>
-        <div class="bar ${cls}"><span style="width:${used}%"></span></div><div class="row"><span>已用 ${used}%</span><span>${until(m.resetTime)}</span></div></div>`;
-    }).join('')}</div>`;
-    if (q.promptCredits) quotaHtml += `<div class="note">Prompt credits：${fmt(q.promptCredits.available)}${q.promptCredits.monthly ? ' / ' + fmt(q.promptCredits.monthly) : ''}${q.planName ? ' · ' + esc(q.planName) : ''}</div>`;
-  } else if (!g.quotaEnabled) {
-    quotaHtml = '<p class="empty">模型配額讀取未開啟（設定 → Antigravity → 讀取模型配額）。</p>';
-  } else if (g.quotaError) {
-    quotaHtml = `<p class="empty">無法讀取配額：${esc(g.quotaError)}</p>`;
-  } else {
-    quotaHtml = `<p class="empty">${g.languageServerRunning ? '讀取中或無配額資訊。' : 'Antigravity 未執行，無法讀取配額。'}</p>`;
+/** Short reset countdown for tight rows: 45m · 3h13m · 7d */
+function shortUntil(ts) {
+  if (!ts) return '';
+  const m = Math.max(0, Math.round((ts - Date.now()) / 60000));
+  if (m < 60) return `${m}m`;
+  if (m < 1440) return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m`;
+  return `${Math.floor(m / 1440)}d`;
+}
+
+/** Models with the same remaining fraction and reset time share one quota pool: show them as one row. */
+function quotaPools(models) {
+  const pools = new Map();
+  for (const m of models) {
+    const key = `${m.remaining.toFixed(4)}|${m.resetTime || ''}`;
+    if (!pools.has(key)) pools.set(key, { remaining: m.remaining, resetTime: m.resetTime, labels: [] });
+    pools.get(key).labels.push(m.label);
   }
+  return [...pools.values()]
+    .map((p) => ({ ...p, family: [...new Set(p.labels.map((l) => l.replace(/\s*\([^)]*\)\s*$/, '')))] }))
+    .sort((a, b) => a.remaining - b.remaining);
+}
+
+function quotaBlock(g) {
+  const q = g.quota;
+  if (q && q.models.length) {
+    let html = `<div class="quota-table">${quotaPools(q.models).map((p) => {
+      const used = Math.round((1 - p.remaining) * 100);
+      return `<div class="q-row" title="${esc(p.labels.join('\n'))}">
+        <span class="q-name">${esc(p.family.join(', '))}${p.labels.length > p.family.length ? ` <span class="q-n">×${p.labels.length}</span>` : ''}</span>
+        ${bar(used)}<b class="num">${esc(t('quotaLeft', { p: Math.round(p.remaining * 100) }))}</b>
+        <span class="q-reset" title="${esc(until(p.resetTime))}">↻ ${esc(shortUntil(p.resetTime))}</span></div>`;
+    }).join('')}</div>`;
+    if (q.promptCredits) {
+      const v = `${fmt(q.promptCredits.available)}${q.promptCredits.monthly ? ' / ' + fmt(q.promptCredits.monthly) : ''}${q.planName ? ' · ' + q.planName : ''}`;
+      html += `<div class="note">${esc(t('promptCredits', { v }))}</div>`;
+    }
+    return html;
+  }
+  if (!g.quotaEnabled) return `<p class="empty">${esc(t('quotaOff'))}</p>`;
+  if (g.quotaError) return `<p class="empty">${esc(t('quotaErr', { e: errText(g.quotaError) }))}</p>`;
+  return `<p class="empty">${esc(g.languageServerRunning ? t('quotaPending') : t('quotaNoLs'))}</p>`;
+}
+
+function agCard(g) {
   return `<article class="card${g.stale ? ' stale' : ''}" data-id="${esc(g.key)}">
     <header class="card-h">
       <div class="acct-title"><i class="chip" style="background:${AG_COLOR}"></i>
-        <div style="min-width:0"><h2 class="acct-name">${esc(g.label)}</h2><div class="acct-meta">${machineTag(g)}Antigravity · ${esc(g.dataDir)}</div></div></div>
-      <div style="display:flex;gap:8px;align-items:center">${stateTag(st)}<span class="badge">${g.appRunning ? 'App 執行中' : 'App 未啟動'}</span></div>
+        <div style="min-width:0"><h2 class="acct-name">${esc(g.label)}</h2><div class="acct-meta">${machineTag(g)} Antigravity</div></div></div>
+      <div class="card-state">${stateTag(agState(g))}<span class="badge">${esc(g.appRunning ? t('appRunning') : t('appStopped'))}</span></div>
     </header>
-    <div class="section-label">模型配額</div>
-    ${quotaHtml}
-    <div class="section-label">活動</div>
+    <div class="section-label">${esc(t('quota'))}</div>
+    ${quotaBlock(g)}
+    <div class="section-label">${esc(t('activity'))}</div>
     <div class="stats">
-      <div class="stat"><div class="k">進行中</div><div class="v num">${g.counts.working}</div></div>
-      <div class="stat"><div class="k">今日對話</div><div class="v num">${g.counts.today}</div></div>
-      <div class="stat"><div class="k">今日步驟</div><div class="v num">${fmt(g.counts.stepsToday)}</div></div>
-      <div class="stat"><div class="k">對話總數</div><div class="v num">${g.counts.total}</div></div>
+      <div class="stat"><div class="k">${esc(t('agActive'))}</div><div class="v num">${g.counts.working}</div></div>
+      <div class="stat"><div class="k">${esc(t('agToday'))}</div><div class="v num">${g.counts.today}</div></div>
+      <div class="stat"><div class="k">${esc(t('agStepsToday'))}</div><div class="v num">${fmt(g.counts.stepsToday)}</div></div>
+      <div class="stat"><div class="k">${esc(t('agTotal'))}</div><div class="v num">${g.counts.total}</div></div>
     </div>
-    <div class="section-label">近 14 天 agent 步驟數（依對話最後活動日）</div>
+    <div class="section-label">${esc(t('agDaily'))}</div>
     <div class="chart ag-chart"></div>
-    <div class="section-label">對話</div>
-    ${g.error ? `<p class="alert">${esc(g.error)}</p>` : ''}
+    <div class="section-label">${esc(t('conversations'))}</div>
+    ${g.error ? `<p class="alert">${esc(errText(g.error))}</p>` : ''}
     <ul class="list" data-scroll="${esc(g.key)}">${g.conversations.slice(0, 15).map((c) => `<li>
-      ${stateTag(c.state)}<span class="t">${esc(c.title)}</span><span class="r num">${fmt(c.steps)} 步</span>
+      ${stateTag(c.state)}<span class="t">${esc(c.title || t('untitled'))}</span><span class="r num">${esc(t('stepsN', { n: fmt(c.steps) }))}</span>
       <span class="m">${esc([c.project, c.agent, rel(c.lastActivity)].filter(Boolean).join(' · '))}</span></li>`).join('')}</ul>
   </article>`;
 }
 
-function render() {
-  if (!snapshot) return;
-  const { claude, antigravity } = snapshot;
-  updatedLine();
-
-  // tiles
+function renderFull(claude, antigravity) {
   const working = claude.reduce((n, a) => n + a.counts.working, 0) + antigravity.reduce((n, g) => n + g.counts.working, 0);
   const idle = claude.reduce((n, a) => n + a.counts.idle, 0);
-  const outToday = claude.reduce((n, a) => n + a.today.output, 0);
-  const msgsToday = claude.reduce((n, a) => n + a.today.messages, 0);
   const maxFh = Math.max(-1, ...claude.map((a) => (a.plan && a.plan.fiveHour) ?? -1));
   const maxSd = Math.max(-1, ...claude.map((a) => (a.plan && a.plan.sevenDay) ?? -1));
-  $('#tiles').innerHTML = [
-    ['工作中的 Agent', working, `${idle} 個 Claude session 閒置`],
-    ['Claude 今日輸出', fmt(outToday), `${msgsToday} 次回應 · ${claude.length} 個帳號`],
-    ['最高 5 小時用量', maxFh >= 0 ? `${maxFh}%` : '—', '各帳號中最高者'],
-    ['最高 7 天用量', maxSd >= 0 ? `${maxSd}%` : '—', '各帳號中最高者'],
-    ['Antigravity 今日', antigravity.reduce((n, g) => n + g.counts.today, 0), `對話 · ${fmt(antigravity.reduce((n, g) => n + g.counts.stepsToday, 0))} 步驟`],
-  ].map(([k, v, d]) => `<div class="tile"><div class="k">${k}</div><div class="v num">${v}</div><div class="d">${d}</div></div>`).join('');
-
-  $('#errors').innerHTML = (snapshot.errors || []).map((e) => `<div class="alert">${esc(e)}</div>`).join('');
-
-  // keep list scroll positions across re-renders
-  const scrolls = {};
-  document.querySelectorAll('[data-scroll]').forEach((l) => (scrolls[l.dataset.scroll] = l.scrollTop));
+  const tiles = [[t('tileWorking'), working, t('tileWorkingSub', { n: idle })]];
+  if (claude.length) {
+    tiles.push(
+      [t('tileClaudeOut'), fmt(claude.reduce((n, a) => n + a.today.output, 0)), t('tileClaudeOutSub', { msgs: claude.reduce((n, a) => n + a.today.messages, 0), n: claude.length })],
+      [t('tileMax5h'), maxFh >= 0 ? `${maxFh}%` : '—', t('tileMaxSub')],
+      [t('tileMax7d'), maxSd >= 0 ? `${maxSd}%` : '—', t('tileMaxSub')]
+    );
+  }
+  if (antigravity.length) {
+    tiles.push([t('tileAg'), antigravity.reduce((n, g) => n + g.counts.today, 0), t('tileAgSub', { steps: fmt(antigravity.reduce((n, g) => n + g.counts.stepsToday, 0)) })]);
+  }
+  $('#tiles').innerHTML = tiles.map(([k, v, d]) => `<div class="tile"><div class="k">${esc(k)}</div><div class="v num">${esc(v)}</div><div class="d">${esc(d)}</div></div>`).join('');
 
   $('#accounts').innerHTML = claude.map((a, i) => claudeCard(a, SERIES[i % SERIES.length])).join('') + antigravity.map(agCard).join('');
-
-  document.querySelectorAll('[data-scroll]').forEach((l) => (l.scrollTop = scrolls[l.dataset.scroll] || 0));
 
   const now = Date.now();
   claude.forEach((a, i) => {
     const card = document.querySelector(`.card[data-id="${CSS.escape(a.key)}"]`);
     const color = SERIES[i % SERIES.length];
-    const hourly = card.querySelector('.hourly-chart');
-    barChart(hourly, {
+    barChart(card.querySelector('.hourly-chart'), {
       categories: a.hourly.map((h) => `${new Date(h.t).getHours()}`),
-      series: [{ name: '輸出 tokens', color, values: a.hourly.map((h) => h.output) }],
+      series: [{ name: t('outTokens'), color, values: a.hourly.map((h) => h.output) }],
       height: 110,
       tickEvery: 3,
-      tipTitle: (k) => `${new Date(a.hourly[k].t).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit' })} 時`,
+      tipTitle: (k) => dateTime(a.hourly[k].t, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
     });
     const pc = card.querySelector('.plan-chart');
     if (pc) {
@@ -308,8 +358,8 @@ function render() {
         from: now - 14 * 86400000,
         to: now,
         series: [
-          { name: '5 小時', color, points: a.plan.history.map((h) => ({ t: h.t, v: h.fiveHour })) },
-          { name: '7 天', color, dash: true, points: a.plan.history.map((h) => ({ t: h.t, v: h.sevenDay })) },
+          { name: t('window5h'), color, points: a.plan.history.map((h) => ({ t: h.t, v: h.fiveHour })) },
+          { name: t('window7d'), color, dash: true, points: a.plan.history.map((h) => ({ t: h.t, v: h.sevenDay })) },
         ],
       });
     }
@@ -318,56 +368,216 @@ function render() {
     const card = document.querySelector(`.card[data-id="${CSS.escape(g.key)}"]`);
     barChart(card.querySelector('.ag-chart'), {
       categories: g.daily.map((d) => d.date.slice(5).replace('-', '/')),
-      series: [{ name: '步驟', color: AG_COLOR, values: g.daily.map((d) => d.steps) }],
+      series: [{ name: t('agSteps'), color: AG_COLOR, values: g.daily.map((d) => d.steps) }],
       height: 110,
       tickEvery: 3,
-      tipTitle: (k) => `${g.daily[k].date} · ${g.daily[k].conversations} 個對話`,
+      tipTitle: (k) => `${g.daily[k].date} · ${t('agConvCount', { n: g.daily[k].conversations })}`,
     });
   });
 
   // cross-account daily comparison
-  const days = claude[0] ? claude[0].daily.map((d) => d.date) : [];
-  const series = claude.map((a, i) => ({ name: a.remote ? `${a.label} @${a.machine}` : a.label, color: SERIES[i % SERIES.length], values: a.daily.map((d) => d.output) }));
+  $('#daily-section').hidden = !claude.length;
+  if (!claude.length) return;
+  const days = claude[0].daily.map((d) => d.date);
+  const series = claude.map((a, i) => ({ name: a.remote ? `${accountName(a)} @${a.machine}` : accountName(a), color: SERIES[i % SERIES.length], values: a.daily.map((d) => d.output) }));
   $('#daily-legend').innerHTML = series.length > 1 ? series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('') : '';
-  if (days.length) {
-    barChart($('#daily-chart'), { categories: days.map((d) => d.slice(5).replace('-', '/')), series, height: 200, tipTitle: (k) => days[k] });
-    $('#daily-table').innerHTML = `<table><thead><tr><th>日期</th>${series.map((x) => `<th>${esc(x.name)}</th>`).join('')}</tr></thead><tbody>${days
-      .map((d, k) => `<tr><td>${d}</td>${claude.map((a) => `<td class="num">${a.daily[k].output.toLocaleString()}</td>`).join('')}</tr>`)
-      .join('')}</tbody></table>`;
-  }
+  barChart($('#daily-chart'), { categories: days.map((d) => d.slice(5).replace('-', '/')), series, height: 200, tipTitle: (k) => days[k] });
+  $('#daily-table').innerHTML = `<table><thead><tr><th>${esc(t('date'))}</th>${series.map((x) => `<th>${esc(x.name)}</th>`).join('')}</tr></thead><tbody>${days
+    .map((d, k) => `<tr><td>${d}</td>${claude.map((a) => `<td class="num">${a.daily[k].output.toLocaleString(t.lang)}</td>`).join('')}</tr>`)
+    .join('')}</tbody></table>`;
 }
 
+// ---------- compact view: one row per account ----------
+function renderCompact(claude, antigravity) {
+  const rows = [];
+  claude.forEach((a, i) => {
+    const color = SERIES[i % SERIES.length];
+    const p = a.plan || {};
+    rows.push(`<div class="crow${a.stale ? ' stale' : ''}">
+      <div class="c-name"><i class="chip" style="background:${color}"></i><div class="c-text"><b>${esc(accountName(a))}</b><span>${machineTag(a)} Claude</span></div></div>
+      <div class="c-state">${stateTag(claudeState(a))}<span class="c-sub">${esc(t('workIdleBadge', { w: a.counts.working, i: a.counts.idle }))}</span></div>
+      <div class="c-meter"><span class="c-k">5h</span>${bar(p.fiveHour)}<b class="num">${p.fiveHour != null ? p.fiveHour + '%' : '—'}</b></div>
+      <div class="c-meter"><span class="c-k">7d</span>${bar(p.sevenDay)}<b class="num">${p.sevenDay != null ? p.sevenDay + '%' : '—'}</b></div>
+      <div class="c-num"><span class="c-k">${esc(t('tokOut'))}</span><b class="num">${fmt(a.today.output)}</b></div>
+    </div>`);
+  });
+  antigravity.forEach((g) => {
+    const lo = lowestQuota(g);
+    const used = lo ? Math.round((1 - lo.remaining) * 100) : null;
+    rows.push(`<div class="crow${g.stale ? ' stale' : ''}">
+      <div class="c-name"><i class="chip" style="background:${AG_COLOR}"></i><div class="c-text"><b>${esc(g.label)}</b><span>${machineTag(g)} Antigravity</span></div></div>
+      <div class="c-state">${stateTag(agState(g))}<span class="c-sub">${esc(t('agActive'))} ${g.counts.working}</span></div>
+      <div class="c-meter wide" title="${esc(lo ? lo.label : '')}"><span class="c-k">${esc(t('lowestQuota'))}</span>${bar(used)}<b class="num">${lo ? esc(t('quotaLeft', { p: Math.round(lo.remaining * 100) })) : '—'}</b></div>
+      <div class="c-num"><span class="c-k">${esc(t('agToday'))}</span><b class="num">${g.counts.today}</b></div>
+    </div>`);
+  });
+  $('#compact').innerHTML = rows.length ? `<div class="card compact-list">${rows.join('')}</div>` : '';
+}
+
+// ---------- empty / missing sources ----------
+function renderEmpty(claude, antigravity) {
+  const src = snapshot.sources;
+  const notes = [];
+  if (!claude.length && !antigravity.length) {
+    notes.push(`<div class="card empty-card"><h2>${esc(t('noneTitle'))}</h2><p>${esc(t('noneBody'))}</p></div>`);
+  }
+  if (src) {
+    if (src.claude.enabled && !claude.length) notes.push(`<p class="note">ℹ ${esc(t('claudeMissing'))} — ${esc(t('claudeMissingBody', { paths: src.claude.paths.join(', ') }))}</p>`);
+    if (src.antigravity.enabled && !antigravity.length) notes.push(`<p class="note">ℹ ${esc(t('agMissing'))} — ${esc(t('agMissingBody', { paths: src.antigravity.paths.join(', ') }))}</p>`);
+  }
+  $('#empty').innerHTML = notes.join('');
+}
+
+function render() {
+  if (!snapshot || !prefs) return;
+  const { claude, antigravity } = snapshot;
+  updatedLine();
+  $('#errors').innerHTML = (snapshot.errors || []).map((e) => `<div class="alert">${esc(errText(e))}</div>`).join('');
+  renderEmpty(claude, antigravity);
+
+  // keep list scroll positions across re-renders
+  const scrolls = {};
+  document.querySelectorAll('[data-scroll]').forEach((l) => (scrolls[l.dataset.scroll] = l.scrollTop));
+  if (prefs.value.view === 'compact') renderCompact(claude, antigravity);
+  else renderFull(claude, antigravity);
+  document.querySelectorAll('[data-scroll]').forEach((l) => (l.scrollTop = scrolls[l.dataset.scroll] || 0));
+}
+
+function updatedLine() {
+  if (!snapshot || !prefs) return;
+  const parts = [t('updated', { when: rel(snapshot.at) }), t('every', { n: prefs.value.refreshSeconds })];
+  if (snapshot.share && snapshot.share.running) parts.push(t('sharing', { port: snapshot.share.port }));
+  const tm = snapshot.timings || {};
+  if (tm.claude != null) parts.push(t('readCost', { s: ((tm.claude + tm.antigravity) / 1000).toFixed(1) }));
+  const machines = (snapshot.machines || []).length > 1
+    ? '   ' + snapshot.machines.map((m) => `${m.ok ? '●' : '○'} ${m.name}${m.local ? ` (${t('thisMachine')})` : ''}`).join('  ')
+    : '';
+  $('#updated').textContent = parts.join(' · ') + machines;
+  $('#updated').title = tm.claude != null ? `Claude ${tm.claude} ms · Antigravity ${tm.antigravity} ms` : '';
+}
+
+// ---------- view mode & prefs ----------
+function applyPrefs(p) {
+  prefs = p;
+  t = I18N.create(p.lang);
+  applyStaticText();
+  document.body.dataset.view = p.value.view;
+  document.querySelectorAll('[data-view]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === p.value.view)));
+  $('#btn-pin').setAttribute('aria-pressed', String(!!p.value.alwaysOnTop));
+  render();
+}
+
+document.querySelectorAll('[data-view]').forEach((b) =>
+  b.addEventListener('click', async () => applyPrefs(await dashboard.patchSettings({ view: b.dataset.view })))
+);
+
 // ---------- settings dialog ----------
+let draftRemotes = [];
+
+function renderRemotes() {
+  $('#remote-list').innerHTML = draftRemotes.length
+    ? draftRemotes.map((r, i) => `<li><span><b>${esc(r.name || r.urls[0])}</b> <span class="hint mono">${esc(r.urls.join(', '))}</span></span>
+        <button type="button" class="btn small" data-remove="${i}">${esc(t('sRemoteRemove'))}</button></li>`).join('')
+    : `<li class="hint">${esc(t('sRemoteNone'))}</li>`;
+}
+$('#remote-list').addEventListener('click', (e) => {
+  const i = e.target.dataset && e.target.dataset.remove;
+  if (i == null) return;
+  draftRemotes.splice(Number(i), 1);
+  renderRemotes();
+});
+async function addRemote() {
+  const input = $('#remote-input');
+  const parsed = await dashboard.parseRemote(input.value);
+  const err = $('#remote-error');
+  if (!parsed) {
+    err.textContent = t('sRemoteBad');
+    err.hidden = false;
+    return;
+  }
+  err.hidden = true;
+  draftRemotes = draftRemotes.filter((r) => r.token !== parsed.token);
+  draftRemotes.push(parsed);
+  input.value = '';
+  renderRemotes();
+}
+$('#remote-add').addEventListener('click', addRemote);
+$('#remote-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault(); // add the remote instead of submitting the whole dialog
+    addRemote();
+  }
+});
+
+function shareStatusText(p) {
+  if (p.share.running) {
+    const urls = (p.share.addresses || []).map((a) => `http://${a}:${p.share.port}`).join(', ');
+    return t('sShareOn', { urls });
+  }
+  return p.share.error ? t('sShareErr', { e: errText(p.share.error) }) : t('sShareOff');
+}
+
+function fillShare(p) {
+  $('#share-status').textContent = shareStatusText(p);
+  $('#share-code').value = p.code || '';
+  $('#share-box').hidden = !$('#settings-form').shareEnabled.checked;
+}
+
 async function openSettings() {
-  const { value, file, hostname, share } = await dashboard.getSettings();
+  const p = await dashboard.getSettings();
+  applyPrefs(p);
+  const v = p.value;
   const f = $('#settings-form');
-  f.refreshSeconds.value = value.refreshSeconds;
-  f.closeToTray.checked = value.closeToTray;
-  f.machineName.value = value.machineName;
-  f.machineName.placeholder = hostname;
-  f.shareEnabled.checked = value.share.enabled;
-  f.sharePort.value = value.share.port;
-  f.shareToken.value = value.share.token;
-  f.remotes.value = value.remotes.map((r) => [r.name, r.url, r.token].join(' | ')).join('\n');
-  $('#share-status').textContent = share.running
-    ? `分享中。另一台電腦填入：http://${(share.addresses || ['<本機IP>'])[0]}:${share.port}${share.addresses && share.addresses.length > 1 ? `（其他 IP：${share.addresses.slice(1).join(', ')}）` : ''}`
-    : share.error ? `無法啟動分享：${share.error}` : '分享未開啟。';
-  f.extraConfigDirs.value = value.claude.extraConfigDirs.join('\n');
-  f.quotaProbe.checked = value.antigravity.quotaProbe;
-  f.agDataDirs.value = value.antigravity.dataDirs.join('\n');
+  $('#lang-select').innerHTML = [`<option value="auto">${esc(t('langAuto'))}</option>`, ...I18N.LANGS.map((l) => `<option value="${l.code}">${esc(l.name)}</option>`)].join('');
+  f.language.value = v.language;
+  f.refreshSeconds.value = v.refreshSeconds;
+  f.machineName.value = v.machineName;
+  f.machineName.placeholder = p.hostname;
+  f.closeToTray.checked = v.closeToTray;
+  f.claudeEnabled.checked = v.claude.enabled;
+  f.agEnabled.checked = v.antigravity.enabled;
+  f.quotaProbe.checked = v.antigravity.quotaProbe;
+  f.extraConfigDirs.value = v.claude.extraConfigDirs.join('\n');
+  f.agDataDirs.value = v.antigravity.dataDirs.join('\n');
+  const home = p.platform === 'win32' ? 'C:\\Users\\you' : '/Users/you';
+  const sep = p.platform === 'win32' ? '\\' : '/';
+  $('#extra-dirs').placeholder = `${home}${sep}.claude-work`;
+  $('#ag-dirs').placeholder = `${home}${sep}.gemini${sep}antigravity`;
+  f.shareEnabled.checked = v.share.enabled;
+  f.sharePort.value = v.share.port;
+  $('#firewall-hint').textContent = p.platform === 'darwin' ? t('sFirewallMac') : p.platform === 'win32' ? t('sFirewallWin') : '';
+  fillShare(p);
+
   const seen = new Set();
   const accts = (snapshot ? snapshot.claude : []).filter((a) => !seen.has(a.id) && seen.add(a.id));
-  $('#label-fields').innerHTML = accts.map((a) => `<label class="row">顯示名稱 · ${esc(a.orgUuid ? 'org ' + a.orgUuid.slice(0, 8) : a.id.slice(0, 12))}${a.remote ? ` @${esc(a.machine)}` : ''}
-      <input type="text" data-label="${esc(a.id)}" value="${esc(value.claude.labels[a.id] || '')}" placeholder="${esc(a.label)}" /></label>`).join('');
-  $('#settings-file').textContent = `設定檔：${file}`;
+  $('#label-fields').innerHTML = accts.map((a) => `<label class="row indent"><span>${esc(t('sAccountName'))} · ${esc(a.profile && a.profile.email ? a.profile.email : t('claudeAccountN', { n: a.ordinal }))}${a.remote ? ` @${esc(a.machine)}` : ''}</span>
+      <input type="text" data-label="${esc(a.id)}" value="${esc(v.claude.labels[a.id] || '')}" placeholder="${esc(accountName({ ...a, label: a.profile && a.profile.email }))}" /></label>`).join('');
+
+  draftRemotes = v.remotes.map((r) => ({ ...r, urls: [...r.urls] }));
+  renderRemotes();
+  $('#remote-input').value = '';
+  $('#remote-error').hidden = true;
+  $('#settings-file').textContent = t('sFile', { file: p.file });
   $('#settings').showModal();
 }
-$('#share-newtoken').addEventListener('click', async () => {
-  $('#settings-form').shareToken.value = await dashboard.newShareToken();
+
+$('#settings-form').shareEnabled.addEventListener('change', (e) => ($('#share-box').hidden = !e.target.checked));
+$('#share-copy').addEventListener('click', async () => {
+  if (!$('#share-code').value) return;
+  await dashboard.copy($('#share-code').value);
+  toast(t('sCopied'));
 });
-$('#share-copy').addEventListener('click', () => navigator.clipboard.writeText($('#settings-form').shareToken.value));
-$('#settings').addEventListener('close', async () => {
-  if ($('#settings').returnValue !== 'save') return;
+$('#share-regen').addEventListener('click', async () => {
+  const p = await dashboard.getSettings();
+  const token = await dashboard.newShareToken();
+  const saved = await dashboard.saveSettings({ ...p.value, share: { ...p.value.share, token } });
+  fillShare(saved);
+});
+$('#settings-cancel').addEventListener('click', () => $('#settings').close());
+
+// Enter anywhere (and the Save button) submits = save. Escape / Cancel close without saving.
+$('#settings-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
   const { value } = await dashboard.getSettings();
   const f = $('#settings-form');
   const lines = (s) => s.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
@@ -376,20 +586,25 @@ $('#settings').addEventListener('close', async () => {
     if (i.value.trim()) labels[i.dataset.label] = i.value.trim();
     else delete labels[i.dataset.label];
   });
-  const remotes = lines(f.remotes.value).map((l) => {
-    const [name, url, token] = l.split('|').map((x) => (x || '').trim());
-    return url ? { name, url, token } : { name: '', url: name, token: '' };
-  });
-  settings = await dashboard.saveSettings({
+  // Something still typed in the "add computer" box counts as added.
+  if ($('#remote-input').value.trim()) {
+    const parsed = await dashboard.parseRemote($('#remote-input').value);
+    if (parsed) draftRemotes.push(parsed);
+  }
+  const saved = await dashboard.saveSettings({
     ...value,
-    refreshSeconds: Math.max(3, Number(f.refreshSeconds.value) || 10),
-    closeToTray: f.closeToTray.checked,
+    language: f.language.value,
+    refreshSeconds: Math.max(3, Math.min(600, Number(f.refreshSeconds.value) || 10)),
     machineName: f.machineName.value.trim(),
-    share: { enabled: f.shareEnabled.checked, port: Math.min(65535, Math.max(1024, Number(f.sharePort.value) || 47821)), token: f.shareToken.value.trim() || value.share.token },
-    remotes,
-    claude: { ...value.claude, extraConfigDirs: lines(f.extraConfigDirs.value), labels },
-    antigravity: { ...value.antigravity, quotaProbe: f.quotaProbe.checked, dataDirs: lines(f.agDataDirs.value) },
+    closeToTray: f.closeToTray.checked,
+    share: { ...value.share, enabled: f.shareEnabled.checked, port: Math.min(65535, Math.max(1024, Number(f.sharePort.value) || 47821)) },
+    remotes: draftRemotes,
+    claude: { ...value.claude, enabled: f.claudeEnabled.checked, extraConfigDirs: lines(f.extraConfigDirs.value), labels },
+    antigravity: { ...value.antigravity, enabled: f.agEnabled.checked, quotaProbe: f.quotaProbe.checked, dataDirs: lines(f.agDataDirs.value) },
   });
+  $('#settings').close();
+  applyPrefs(saved);
+  toast(t('sSaved'));
 });
 
 // ---------- wiring ----------
@@ -397,30 +612,17 @@ $('#btn-refresh').addEventListener('click', () => dashboard.refresh());
 $('#btn-settings').addEventListener('click', openSettings);
 $('#btn-pin').addEventListener('click', async (e) => {
   const on = e.currentTarget.getAttribute('aria-pressed') !== 'true';
-  await dashboard.setAlwaysOnTop(on);
-  e.currentTarget.setAttribute('aria-pressed', String(on));
+  applyPrefs(await dashboard.patchSettings({ alwaysOnTop: on }));
 });
 let resizeTimer;
 addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(render, 120);
 });
-function updatedLine() {
-  if (!snapshot) return;
-  const ms = (snapshot.machines || []).map((m) => `${m.ok ? '●' : '○'} ${m.name}${m.local ? '（本機）' : ''}`).join('  ');
-  const share = snapshot.share && snapshot.share.running ? ` · 分享中 :${snapshot.share.port}` : '';
-  const t = snapshot.timings || {};
-  const cost = t.claude != null ? ` · 讀取 ${((t.claude + t.antigravity) / 1000).toFixed(1)} 秒` : '';
-  $('#updated').textContent = `更新於 ${rel(snapshot.at)} · 每 ${settings ? settings.refreshSeconds : 10} 秒${share}${cost}　${ms}`;
-  $('#updated').title = t.claude != null ? `Claude ${t.claude} ms · Antigravity ${t.antigravity} ms` : '';
-}
 setInterval(updatedLine, 5000);
 
 dashboard.onSnapshot((s) => {
   snapshot = s;
   render();
 });
-dashboard.getSettings().then(({ value }) => {
-  settings = value;
-  $('#btn-pin').setAttribute('aria-pressed', String(!!value.alwaysOnTop));
-});
+dashboard.getSettings().then(applyPrefs);

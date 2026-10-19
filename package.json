@@ -1,17 +1,50 @@
 {
   "name": "aiag-dashboard",
-  "version": "0.1.0",
-  "description": "AI Agent Dashboard: Claude (multi-account) + Antigravity usage and status",
+  "productName": "AIAG Dashboard",
+  "version": "0.2.0",
+  "description": "Desktop dashboard for Claude (multiple accounts) and Antigravity: plan usage, session status and token usage, read from local files.",
   "main": "src/main.js",
   "private": true,
+  "repository": "github:OMPC123/AIAG-Dashboard",
   "scripts": {
     "start": "electron .",
-    "check": "node scripts/check-collectors.js"
+    "check": "node scripts/check-collectors.js",
+    "test": "node scripts/test-remote.js",
+    "icon": "node scripts/make-icon.js",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
   },
   "dependencies": {
     "sql.js": "1.13.0"
   },
   "devDependencies": {
-    "electron": "38.2.0"
+    "electron": "38.2.0",
+    "electron-builder": "26.0.12"
+  },
+  "build": {
+    "appId": "io.github.ompc123.aiag-dashboard",
+    "productName": "AIAG Dashboard",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["src/**/*", "package.json"],
+    "asarUnpack": ["src/collectors/**"],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "portable", "arch": ["x64"] }],
+      "artifactName": "AIAG-Dashboard-${version}-win-${arch}-${target}.${ext}"
+    },
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true },
+    "portable": { "artifactName": "AIAG-Dashboard-${version}-win-portable.${ext}" },
+    "mac": {
+      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }],
+      "category": "public.app-category.developer-tools",
+      "artifactName": "AIAG-Dashboard-${version}-mac-${arch}.${ext}",
+      "identity": "-"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Development",
+      "artifactName": "AIAG-Dashboard-${version}-linux-${arch}.${ext}"
+    },
+    "publish": { "provider": "github", "owner": "OMPC123", "repo": "AIAG-Dashboard", "releaseType": "draft" }
   }
 }

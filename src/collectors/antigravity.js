@@ -213,10 +213,14 @@ async function collectAntigravity(settings = {}) {
   let quota = null;
   let quotaError = null;
   if (settings.quotaProbe && lsRunning) {
-    try {
-      quota = await probeQuota();
-    } catch (e) {
-      quotaError = String(e.message || e);
+    if (process.platform !== 'win32' && process.platform !== 'darwin') {
+      quotaError = { key: 'quotaUnsupported' };
+    } else {
+      try {
+        quota = await probeQuota();
+      } catch (e) {
+        quotaError = { text: String(e.message || e) };
+      }
     }
   }
 
@@ -234,7 +238,7 @@ async function collectAntigravity(settings = {}) {
     }
     const conversations = rows.map((r) => ({
       id: r.conversation_id,
-      title: r.title || r.preview || '(未命名對話)',
+      title: r.title || r.preview || null,
       project: workspaceName(r.workspace_uris),
       agent: r.agent_name || null,
       steps: Number(r.step_count) || 0,
@@ -266,7 +270,7 @@ async function collectAntigravity(settings = {}) {
       error,
       quota: q,
       quotaEnabled: !!settings.quotaProbe,
-      quotaError: quotaError || (settings.quotaProbe && lsRunning && quota && !quota.length ? '找不到可回應的 language server' : null),
+      quotaError: quotaError || (settings.quotaProbe && lsRunning && quota && !quota.length ? { key: 'quotaNoServer' } : null),
       counts: {
         working: conversations.filter((c) => c.state === 'working' || c.state === 'waiting').length,
         total: conversations.length,
@@ -281,4 +285,9 @@ async function collectAntigravity(settings = {}) {
   return out;
 }
 
-module.exports = { collectAntigravity };
+/** Paths checked for Antigravity data; shown to the user when nothing is found. */
+function antigravitySearchPaths(settings = {}) {
+  return settings.dataDirs && settings.dataDirs.length ? settings.dataDirs : DEFAULT_DIRS.map((d) => d.dir);
+}
+
+module.exports = { collectAntigravity, antigravitySearchPaths };
