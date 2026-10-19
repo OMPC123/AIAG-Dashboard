@@ -48,6 +48,25 @@ Shortcuts for later: double-click `AIAG Dashboard.bat` (Windows) or `AIAG Dashbo
 - Closing the window keeps it running in the tray / menu bar: green dot = an agent is working, blue = idle, grey = nothing running. Right-click the icon to quit.
 - **⚙ Settings**: language, refresh interval, which sources to show, display names for accounts, and sharing between computers. Settings are saved immediately and kept across restarts.
 
+## Accounts
+
+*Settings → Accounts* lists every account on this computer. You can rename it, hide it from the dashboard, or add a new one.
+
+**Add a Claude account**: type a name (e.g. “Work”) and click **Add and sign in**. The dashboard creates a separate Claude Code profile folder for it (`~/.claude-accounts/<name>`) and opens the official Claude Code sign-in (`claude auth login`) in a terminal window; you finish signing in in your browser. The dashboard never sees your password or tokens; Claude Code stores the sign-in in that folder (on macOS, in the Keychain).
+
+For each added account:
+
+- **Open Claude Code** starts Claude Code as that account. Its sessions, tokens and working status then show on the dashboard.
+- **Copy command** copies a one-line command to run Claude Code as that account from any terminal.
+- **Sign out**, **Folder** and **Remove** are also there. Remove only forgets the account in the dashboard; the folder and its sign-in stay on disk.
+- **Add existing folder…** registers a folder you already use with `CLAUDE_CONFIG_DIR`.
+
+Signing in needs Claude Code. The dashboard finds it on your PATH, in the usual install folders, or inside the Claude desktop app. If none is found, *Settings* links to the install guide.
+
+Plan usage % (5-hour / 7-day) comes from the Claude desktop app, so it appears for accounts you have signed in to there. Accounts used only through Claude Code show sessions, tokens and status.
+
+Antigravity signs in with Google inside the Antigravity app itself; the dashboard lists the account that app is using. You can rename or hide it.
+
 ## Where the data comes from
 
 | What | Where (Windows / macOS) |
@@ -64,7 +83,7 @@ Notes:
 
 - Plan usage % is recorded by the **Claude desktop app** while you are signed in to that account. Accounts used only through the Claude Code CLI show sessions and tokens but no plan %.
 - Token counts cover Claude Code on this computer. Chats on claude.ai in a browser are not stored locally and are not counted.
-- If you sign Claude Code into another account with `CLAUDE_CONFIG_DIR`, add that folder under *Settings → Sources → Advanced*.
+- To track another Claude account, add it under *Settings → Accounts* (see above).
 - Antigravity does not store token counts locally, so activity is shown as conversations and agent steps.
 
 ## Several computers

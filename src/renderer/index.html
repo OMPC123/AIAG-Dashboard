@@ -55,18 +55,31 @@
       </fieldset>
 
       <fieldset>
-        <legend data-i18n="sSources"></legend>
-        <label class="row check"><input type="checkbox" name="claudeEnabled" /> <span data-i18n="sClaudeOn"></span></label>
-        <div id="label-fields"></div>
-        <label class="row check"><input type="checkbox" name="agEnabled" /> <span data-i18n="sAgOn"></span></label>
-        <label class="row check"><input type="checkbox" name="quotaProbe" /> <span data-i18n="sQuota"></span></label>
-        <p class="hint" data-i18n="sQuotaHint"></p>
+        <legend data-i18n="sAccounts"></legend>
+
+        <div class="acc-group">
+          <label class="row check acc-head"><input type="checkbox" name="claudeEnabled" /> <b data-i18n="sAccClaude"></b></label>
+          <ul class="acc-list" id="acc-claude"></ul>
+          <div class="acc-add">
+            <input type="text" id="acc-new-name" data-i18n-placeholder="sAccNewName" />
+            <button type="button" class="btn primary" id="acc-add" data-i18n="sAccAdd"></button>
+            <button type="button" class="btn" id="acc-add-folder" data-i18n="sAccAddFolder"></button>
+          </div>
+          <p class="hint" id="acc-cli"></p>
+          <p class="hint" data-i18n="sAccHint"></p>
+          <p class="hint" data-i18n="sAccPlanNote"></p>
+        </div>
+
+        <div class="acc-group">
+          <label class="row check acc-head"><input type="checkbox" name="agEnabled" /> <b data-i18n="sAccAg"></b></label>
+          <ul class="acc-list" id="acc-ag"></ul>
+          <label class="row check"><input type="checkbox" name="quotaProbe" /> <span data-i18n="sQuota"></span></label>
+          <p class="hint" data-i18n="sQuotaHint"></p>
+        </div>
+
+        <p class="hint" id="acc-remote-note" data-i18n="sAccRemoteNote"></p>
         <details>
           <summary data-i18n="sAdvanced"></summary>
-          <label class="col"><span data-i18n="sExtraDirs"></span>
-            <textarea name="extraConfigDirs" rows="2" id="extra-dirs"></textarea>
-          </label>
-          <p class="hint" data-i18n="sExtraDirsHint"></p>
           <label class="col"><span data-i18n="sAgDirs"></span>
             <textarea name="agDataDirs" rows="2" id="ag-dirs"></textarea>
           </label>

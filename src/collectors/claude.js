@@ -108,15 +108,20 @@ function profileFromClaudeJson(file) {
   };
 }
 
-/** Claude Code config dirs: the default ~/.claude plus any extra CLAUDE_CONFIG_DIR-style dirs. */
-function configDirs(extraDirs) {
-  const dirs = [{ dir: path.join(HOME, '.claude'), claudeJson: path.join(HOME, '.claude.json') }];
-  for (const d of extraDirs || []) {
-    if (!d) continue;
+/**
+ * Claude Code config dirs: the default ~/.claude, the accounts added in the dashboard (each its own
+ * CLAUDE_CONFIG_DIR, with .claude.json inside), and legacy extra dirs.
+ */
+function configDirs(settings = {}) {
+  const dirs = [{ dir: path.join(HOME, '.claude'), claudeJson: path.join(HOME, '.claude.json'), account: null }];
+  const add = (d, account) => {
+    if (!d) return;
     const dir = path.resolve(d);
-    if (dirs.some((x) => x.dir.toLowerCase() === dir.toLowerCase())) continue;
-    dirs.push({ dir, claudeJson: path.join(dir, '.claude.json') });
-  }
+    if (dirs.some((x) => x.dir.toLowerCase() === dir.toLowerCase())) return;
+    dirs.push({ dir, claudeJson: path.join(dir, '.claude.json'), account });
+  };
+  for (const a of settings.accounts || []) add(a.dir, { id: a.id, name: a.name, dir: path.resolve(a.dir) });
+  for (const d of settings.extraConfigDirs || []) add(d, null);
   return dirs;
 }
 
@@ -239,13 +244,15 @@ function collectClaude(settings = {}) {
 
   for (const [acct, org] of desktop.accounts) ensure(acct, org).sources.push('desktop');
 
-  for (const { dir, claudeJson } of configDirs(settings.extraConfigDirs)) {
-    if (!fs.existsSync(dir)) continue;
-    const profile = profileFromClaudeJson(claudeJson);
-    const dirAccount = profile ? profile.accountUuid : `dir:${dir}`;
+  for (const { dir, claudeJson, account } of configDirs(settings)) {
+    const profile = fs.existsSync(dir) ? profileFromClaudeJson(claudeJson) : null;
+    // An account added in the dashboard is listed even before its first login.
+    const dirAccount = profile ? profile.accountUuid : account ? `account:${account.id}` : `dir:${dir}`;
     const own = ensure(dirAccount, profile && profile.orgUuid);
     if (profile) own.profile = profile;
+    if (account) own.account = account;
     own.sources.push(dir);
+    if (!fs.existsSync(dir)) continue;
 
     const live = new Map(liveSessions(dir).map((s) => [s.sessionId, s]));
 
@@ -324,6 +331,7 @@ function collectClaude(settings = {}) {
   let idx = 0;
   for (const a of accounts.values()) {
     if (a.accountUuid.startsWith('dir:') && a.sessions.size === 0) continue;
+    const acct = a.account || null;
     const plan = a.orgUuid ? usage.get(a.orgUuid) : null;
     const daily = [];
     for (let i = 0; i < days; i++) {
@@ -363,9 +371,13 @@ function collectClaude(settings = {}) {
     out.push({
       id: a.accountUuid,
       kind: 'claude',
-      label: labels[a.accountUuid] || (p && (p.email || p.displayName)) || null, // null -> UI shows "Claude account N"
+      // display name: renamed here > name given when the account was added > email; null -> "Claude account N"
+      label: labels[a.accountUuid] || (acct && acct.name) || (p && (p.email || p.displayName)) || null,
       ordinal: idx,
       profile: p,
+      // set for accounts added in the dashboard: { id, name, dir }; loggedIn is false until its first sign-in
+      account: acct,
+      loggedIn: !!p,
       orgUuid: a.orgUuid,
       sources: a.sources,
       plan: plan
@@ -393,7 +405,7 @@ function rank(state) {
 
 /** Paths checked for Claude data; shown to the user when nothing is found. */
 function claudeSearchPaths(settings = {}) {
-  return [DESKTOP_DIR, ...configDirs(settings.extraConfigDirs).map((d) => d.dir)];
+  return [DESKTOP_DIR, ...configDirs(settings).map((d) => d.dir)];
 }
 
 module.exports = { collectClaude, claudeSearchPaths, desktopDir, DESKTOP_DIR };

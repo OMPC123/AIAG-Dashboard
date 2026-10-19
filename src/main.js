@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell, screen, clipboard } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell, screen, clipboard, dialog } = require('electron');
 const os = require('os');
 const path = require('path');
 const zlib = require('zlib');
@@ -6,6 +6,7 @@ const { Worker } = require('worker_threads');
 const { applyShare, fetchRemote, newToken, makeCode, parseCode } = require('./remote');
 const { Settings } = require('./settings');
 const I18N = require('./i18n');
+const Accounts = require('./accounts');
 
 let win = null;
 let tray = null;
@@ -171,8 +172,17 @@ async function collect() {
       if (s.claude.labels[a.id]) a.label = s.claude.labels[a.id];
     }
     for (const g of antigravity) if (s.antigravity.labels[g.id]) g.label = s.antigravity.labels[g.id];
+    // Accounts the user chose to hide (Settings -> Accounts).
+    const allClaude = claude;
+    const allAg = antigravity;
+    claude = claude.filter((a) => !s.claude.hidden.includes(a.id));
+    antigravity = antigravity.filter((g) => !s.antigravity.hidden.includes(g.id));
 
-    lastSnapshot = { at, machine, machines, share: shareStatus, claude, antigravity, errors, timings: local.timings, sources: local.sources };
+    lastSnapshot = {
+      at, machine, machines, share: shareStatus, claude, antigravity, errors, timings: local.timings, sources: local.sources,
+      // everything, including hidden accounts, for the Settings -> Accounts list
+      allAccounts: { claude: allClaude, antigravity: allAg },
+    };
     send(lastSnapshot);
     updateTray(lastSnapshot);
     return lastSnapshot;
@@ -263,6 +273,12 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.webContents.on('did-finish-load', () => lastSnapshot && send(lastSnapshot));
   for (const ev of ['resize', 'move', 'maximize', 'unmaximize']) win.on(ev, rememberBounds);
+  let lastFocusRefresh = 0;
+  win.on('focus', () => {
+    if (Date.now() - lastFocusRefresh < 3000) return;
+    lastFocusRefresh = Date.now();
+    collect(); // e.g. just signed in to an account in a terminal window
+  });
   win.on('close', (e) => {
     if (!quitting && settings.value.closeToTray) {
       e.preventDefault();
@@ -286,6 +302,8 @@ function settingsPayload() {
     lang: currentLang(),
     share: shareStatus,
     code: shareCode(),
+    cli: Accounts.findClaudeCli(settings.value.claude.cliPath),
+    accountsRoot: Accounts.ACCOUNTS_ROOT,
   };
 }
 
@@ -330,6 +348,48 @@ app.whenReady().then(() => {
   ipcMain.handle('remote:parse', (_e, text) => parseCode(text));
   ipcMain.handle('clipboard:write', (_e, text) => clipboard.writeText(String(text || '')));
   ipcMain.handle('open:path', (_e, p) => typeof p === 'string' && shell.openPath(p));
+  ipcMain.handle('open:url', (_e, u) => typeof u === 'string' && /^https:\/\//.test(u) && shell.openExternal(u));
+
+  // ---- accounts (each Claude account = its own Claude Code profile folder) ----
+  const findAccount = (id) => settings.value.claude.accounts.find((a) => a.id === id);
+  const accountAction = (fn) => async (_e, arg) => {
+    try {
+      const result = await fn(arg);
+      return { ok: true, ...(result || {}), payload: settingsPayload() };
+    } catch (e) {
+      return { ok: false, error: e.code || e.message, payload: settingsPayload() };
+    }
+  };
+  ipcMain.handle('accounts:add', accountAction(({ name, login }) => {
+    const account = Accounts.createAccount(name, settings.value.claude.accounts);
+    settings.patch({ claude: { accounts: [...settings.value.claude.accounts, account] } });
+    if (login) Accounts.loginAccount(account, settings.value.claude.cliPath);
+    collect();
+    return { account };
+  }));
+  ipcMain.handle('accounts:addFolder', accountAction(async () => {
+    const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'showHiddenFiles', 'createDirectory'], defaultPath: os.homedir() });
+    if (r.canceled || !r.filePaths[0]) return { canceled: true };
+    const dir = path.resolve(r.filePaths[0]);
+    if (settings.value.claude.accounts.some((a) => path.resolve(a.dir) === dir)) return { duplicate: true };
+    const account = Accounts.accountFromFolder(dir);
+    settings.patch({ claude: { accounts: [...settings.value.claude.accounts, account] } });
+    collect();
+    return { account };
+  }));
+  ipcMain.handle('accounts:login', accountAction((id) => void Accounts.loginAccount(findAccount(id), settings.value.claude.cliPath)));
+  ipcMain.handle('accounts:logout', accountAction((id) => void Accounts.logoutAccount(findAccount(id), settings.value.claude.cliPath)));
+  ipcMain.handle('accounts:open', accountAction((id) => void Accounts.openClaude(findAccount(id), settings.value.claude.cliPath)));
+  ipcMain.handle('accounts:copyCommand', accountAction((id) => void clipboard.writeText(Accounts.shellCommand(findAccount(id)))));
+  ipcMain.handle('accounts:showFolder', accountAction((id) => void shell.openPath(findAccount(id).dir)));
+  ipcMain.handle('accounts:remove', accountAction((id) => {
+    // Only forgets the account here; the profile folder (and its sign-in) stays on disk.
+    const c = settings.value.claude;
+    const accountKey = `account:${id}`;
+    settings.value.claude = { ...c, accounts: c.accounts.filter((a) => a.id !== id), hidden: c.hidden.filter((h) => h !== accountKey) };
+    settings.write();
+    collect();
+  }));
 
   tray = new Tray(icon('idle'));
   buildTrayMenu();

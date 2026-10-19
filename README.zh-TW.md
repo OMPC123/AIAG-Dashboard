@@ -48,6 +48,25 @@ npm start
 - 關閉視窗後，程式會繼續在系統匣／選單列執行：綠點＝有 agent 在工作，藍點＝閒置，灰點＝都沒在跑。在圖示上按右鍵可以結束。
 - **⚙ 設定**：語言、更新間隔、要顯示哪些來源、帳號顯示名稱、多台電腦分享。設定會立即儲存，重新開啟後仍然保留。
 
+## 帳號
+
+「設定 → 帳號」列出這台電腦上的所有帳號。每個帳號都可以改名、在 Dashboard 上隱藏，也可以新增帳號。
+
+**新增 Claude 帳號**：輸入名稱（例如「工作」），按「新增並登入」。Dashboard 會為這個帳號建立獨立的 Claude Code 設定資料夾（`~/.claude-accounts/<名稱>`），並在終端機視窗開啟官方的 Claude Code 登入（`claude auth login`），你在瀏覽器中完成登入即可。Dashboard 不會看到你的密碼或 token；登入資料由 Claude Code 存在該資料夾裡（macOS 則存在鑰匙圈）。
+
+每個新增的帳號都有這些按鈕：
+
+- **開啟 Claude Code**：用這個帳號啟動 Claude Code。之後它的 session、token 和工作狀態就會出現在 Dashboard 上。
+- **複製指令**：複製一行指令，在任何終端機貼上就能用這個帳號執行 Claude Code。
+- **登出**、**資料夾**、**移除**：「移除」只會讓 Dashboard 忘記這個帳號，資料夾和裡面的登入資料仍保留在電腦上。
+- **加入現有資料夾…**：把你原本就用 `CLAUDE_CONFIG_DIR` 使用的資料夾加進來。
+
+登入需要 Claude Code。Dashboard 會依序到 PATH、常見的安裝位置，以及 Claude 桌面版內部尋找它。如果都找不到，「設定」裡會提供安裝說明的連結。
+
+方案用量 %（5 小時／7 天）來自 Claude 桌面版，所以只有在桌面版登入過的帳號才看得到。只透過 Claude Code 使用的帳號，會顯示 session、token 和工作狀態。
+
+Antigravity 是在 Antigravity App 裡用 Google 帳號登入，Dashboard 會列出該 App 目前使用的帳號。這個帳號也可以改名或隱藏。
+
 ## 資料來源
 
 | 項目 | 位置（Windows／macOS） |
@@ -64,7 +83,7 @@ npm start
 
 - 方案用量 % 是由 **Claude 桌面版**在你登入該帳號時記錄的。只用 Claude Code CLI 的帳號會顯示 session 和 token，但沒有方案用量 %。
 - Token 數只統計這台電腦上的 Claude Code。在瀏覽器裡用 claude.ai 的對話不會存在本機，所以不會計入。
-- 如果你用 `CLAUDE_CONFIG_DIR` 讓 Claude Code 登入另一個帳號，請在「設定 → 資料來源 → 進階」加入那個資料夾。
+- 要追蹤另一個 Claude 帳號，請到「設定 → 帳號」新增（見上方說明）。
 - Antigravity 本機不保存 token 數，所以用對話數和 agent 步驟數表示活動量。
 
 ## 多台電腦

@@ -62,7 +62,9 @@ const machineTag = (x) =>
   `<span class="machine${x.remote ? ' remote' : ''}${x.stale ? ' stale' : ''}" title="${esc(x.stale ? t('staleTitle', { when: rel(x.collectedAt) }) : t('machineTitle'))}">💻 ${esc(x.machine)}${x.stale ? ' · ' + esc(t('offline')) : ''}</span>`;
 const shortModel = (m) => (m || '').replace(/^claude-/, '').replace(/-\d{8}$/, '');
 const dateTime = (ms, opts) => new Date(ms).toLocaleString(t.lang, opts);
-const claudeState = (a) => (a.counts.working ? 'working' : a.counts.idle ? 'idle' : 'off');
+const needsLogin = (a) => !!(a.account && !a.loggedIn && !a.remote);
+const claudeState = (a) => (needsLogin(a) ? 'signedout' : a.counts.working ? 'working' : a.counts.idle ? 'idle' : 'off');
+const accButton = (action, a, label, cls = '') => `<button type="button" class="btn small ${cls}" data-acc="${action}" data-id="${esc(a.account.id)}">${esc(label)}</button>`;
 const agState = (g) => (!g.appRunning ? 'off' : g.counts.working ? 'working' : 'idle');
 
 // ---------- tooltip & toast ----------
@@ -218,7 +220,21 @@ function lowestQuota(g) {
 }
 
 // ---------- full view ----------
+function signInCard(a, color) {
+  return `<article class="card" data-id="${esc(a.key)}">
+    <header class="card-h">
+      <div class="acct-title"><i class="chip" style="background:${color}"></i>
+        <div style="min-width:0"><h2 class="acct-name">${esc(accountName(a))}</h2><div class="acct-meta">${machineTag(a)} Claude</div></div></div>
+      <div class="card-state">${stateTag('signedout')}</div>
+    </header>
+    <p class="empty">${esc(t('accNotSignedInBody'))}</p>
+    <p class="hint mono">${esc(t('accFolderLabel', { dir: a.account.dir }))}</p>
+    <div class="acc-actions">${accButton('login', a, t('sAccLogin'), 'primary')}</div>
+  </article>`;
+}
+
 function claudeCard(a, color) {
+  if (needsLogin(a)) return signInCard(a, color);
   const p = a.profile || {};
   const meta = [p.orgName, p.billingType && p.billingType.replace(/_/g, ' ')].filter(Boolean).join(' · ');
   const sessions = a.sessions.filter((s) => s.state !== 'archived').slice(0, 15);
@@ -226,7 +242,7 @@ function claudeCard(a, color) {
     <header class="card-h">
       <div class="acct-title"><i class="chip" style="background:${color}"></i>
         <div style="min-width:0"><h2 class="acct-name">${esc(accountName(a))}</h2><div class="acct-meta">${machineTag(a)} Claude${meta ? ' · ' + esc(meta) : ''}</div></div></div>
-      <div class="card-state">${stateTag(claudeState(a))}<span class="badge">${esc(t('workIdleBadge', { w: a.counts.working, i: a.counts.idle }))}</span></div>
+      <div class="card-state">${stateTag(claudeState(a))}<span class="badge">${esc(t('workIdleBadge', { w: a.counts.working, i: a.counts.idle }))}</span>${a.account && !a.remote ? accButton('open', a, t('sAccOpen')) : ''}</div>
     </header>
     <div class="section-label">${esc(t('planUsage'))}</div>
     ${a.plan ? `<div class="meters">${meter(t('window5h'), a.plan.fiveHour, a.plan.sampledAt)}${meter(t('window7d'), a.plan.sevenDay)}</div>
@@ -345,6 +361,7 @@ function renderFull(claude, antigravity) {
   claude.forEach((a, i) => {
     const card = document.querySelector(`.card[data-id="${CSS.escape(a.key)}"]`);
     const color = SERIES[i % SERIES.length];
+    if (needsLogin(a)) return;
     barChart(card.querySelector('.hourly-chart'), {
       categories: a.hourly.map((h) => `${new Date(h.t).getHours()}`),
       series: [{ name: t('outTokens'), color, values: a.hourly.map((h) => h.output) }],
@@ -393,6 +410,14 @@ function renderCompact(claude, antigravity) {
   claude.forEach((a, i) => {
     const color = SERIES[i % SERIES.length];
     const p = a.plan || {};
+    if (needsLogin(a)) {
+      rows.push(`<div class="crow">
+      <div class="c-name"><i class="chip" style="background:${color}"></i><div class="c-text"><b>${esc(accountName(a))}</b><span>${machineTag(a)} Claude</span></div></div>
+      <div class="c-state">${stateTag('signedout')}</div>
+      <div class="c-wide">${accButton('login', a, t('sAccLogin'), 'primary')}</div>
+    </div>`);
+      return;
+    }
     rows.push(`<div class="crow${a.stale ? ' stale' : ''}">
       <div class="c-name"><i class="chip" style="background:${color}"></i><div class="c-text"><b>${esc(accountName(a))}</b><span>${machineTag(a)} Claude</span></div></div>
       <div class="c-state">${stateTag(claudeState(a))}<span class="c-sub">${esc(t('workIdleBadge', { w: a.counts.working, i: a.counts.idle }))}</span></div>
@@ -523,6 +548,162 @@ function fillShare(p) {
   $('#share-box').hidden = !$('#settings-form').shareEnabled.checked;
 }
 
+// ---------- settings: accounts ----------
+// What the user has typed / toggled in the account rows, kept across re-renders while the dialog is open.
+let accDraft = new Map();
+
+/** Rows for this computer's accounts: everything detected (incl. hidden) plus added accounts not collected yet. */
+function accountRows(p) {
+  const all = (snapshot && snapshot.allAccounts) || { claude: snapshot ? snapshot.claude : [], antigravity: snapshot ? snapshot.antigravity : [] };
+  const claude = all.claude.filter((a) => !a.remote);
+  for (const acc of p.value.claude.accounts) {
+    if (!claude.some((a) => a.account && a.account.id === acc.id)) {
+      claude.push({ id: `account:${acc.id}`, account: acc, label: acc.name, loggedIn: false, profile: null, ordinal: claude.length + 1 });
+    }
+  }
+  return { claude, antigravity: all.antigravity.filter((g) => !g.remote) };
+}
+
+function accountRowHtml(kind, a, p) {
+  const key = `${kind}|${a.id}`;
+  const d = accDraft.get(key) || {};
+  const hiddenList = kind === 'claude' ? p.value.claude.hidden : p.value.antigravity.hidden;
+  const shown = d.show ?? !hiddenList.includes(a.id);
+  let name;
+  let status;
+  let actions = '';
+  if (kind === 'antigravity') {
+    name = d.name ?? (p.value.antigravity.labels[a.id] || '');
+    status = `<span class="hint">${esc(a.label)} · ${esc(t('sAccDetected'))}</span>`;
+  } else if (a.account) {
+    name = d.name ?? a.account.name;
+    const email = a.profile && a.profile.email;
+    status = a.loggedIn
+      ? `<span class="acc-ok">● ${esc(email ? t('sAccSignedInAs', { email }) : t('sAccSignedIn'))}</span>`
+      : `<span class="acc-warn">○ ${esc(t('sAccNotSignedIn'))}</span>`;
+    const id = esc(a.account.id);
+    actions = `<div class="acc-actions">
+        ${a.loggedIn ? '' : `<button type="button" class="btn small primary" data-acc="login" data-id="${id}">${esc(t('sAccLogin'))}</button>`}
+        <button type="button" class="btn small" data-acc="open" data-id="${id}">${esc(t('sAccOpen'))}</button>
+        <button type="button" class="btn small" data-acc="copyCommand" data-id="${id}">${esc(t('sAccCopyCmd'))}</button>
+        <button type="button" class="btn small" data-acc="showFolder" data-id="${id}" title="${esc(a.account.dir)}">${esc(t('sAccFolder'))}</button>
+        ${a.loggedIn ? `<button type="button" class="btn small" data-acc="logout" data-id="${id}">${esc(t('sAccLogout'))}</button>` : ''}
+        <button type="button" class="btn small danger" data-acc="remove" data-id="${id}" data-name="${esc(a.account.name)}" data-dir="${esc(a.account.dir)}">${esc(t('sAccRemove'))}</button>
+      </div>`;
+  } else {
+    name = d.name ?? (p.value.claude.labels[a.id] || '');
+    const email = a.profile && a.profile.email;
+    status = `<span class="hint">${esc(email || t('claudeAccountN', { n: a.ordinal }))} · ${esc(t('sAccDetected'))}</span>`;
+  }
+  const placeholder = kind === 'antigravity' ? a.label : (a.profile && a.profile.email) || t('claudeAccountN', { n: a.ordinal });
+  return `<li class="acc-row" data-key="${esc(key)}" data-kind="${kind}" data-id="${esc(a.id)}" data-account="${esc(a.account ? a.account.id : '')}">
+      <input type="checkbox" class="acc-show" title="${esc(t('sAccShow'))}" aria-label="${esc(t('sAccShow'))}" ${shown ? 'checked' : ''} />
+      <div class="acc-main">
+        <input type="text" class="acc-name" value="${esc(name)}" placeholder="${esc(placeholder)}" />
+        ${status}
+      </div>
+      ${actions}
+    </li>`;
+}
+
+function renderAccounts(p) {
+  const rows = accountRows(p);
+  $('#acc-claude').innerHTML = rows.claude.map((a) => accountRowHtml('claude', a, p)).join('');
+  $('#acc-ag').innerHTML = rows.antigravity.map((g) => accountRowHtml('antigravity', g, p)).join('') || `<li class="hint">${esc(t('agMissing'))}</li>`;
+  const cli = p.cli;
+  $('#acc-cli').innerHTML = cli
+    ? esc(t('sCli', { path: cli.path }) + t('sCliSrc_' + cli.source))
+    : `<span class="acc-warn">${esc(t('sCliMissing'))}</span> <a href="#" id="cli-install">${esc(t('sCliInstall'))}</a>`;
+  $('#acc-add').disabled = !cli;
+  $('#acc-remote-note').hidden = !((snapshot && snapshot.machines) || []).some((m) => !m.local);
+}
+
+// remember edits so a refresh while the dialog is open doesn't wipe them
+for (const sel of ['#acc-claude', '#acc-ag']) {
+  $(sel).addEventListener('input', (e) => {
+    const row = e.target.closest('.acc-row');
+    if (!row) return;
+    const d = accDraft.get(row.dataset.key) || {};
+    if (e.target.classList.contains('acc-name')) d.name = e.target.value;
+    if (e.target.classList.contains('acc-show')) d.show = e.target.checked;
+    accDraft.set(row.dataset.key, d);
+  });
+}
+
+function actionError(code) {
+  const key = 'err_' + code;
+  const text = t(key);
+  return text === key ? code : text;
+}
+
+async function runAccountAction(action, id, btn) {
+  if (action === 'remove' && !confirm(t('sAccRemoveConfirm', { name: btn.dataset.name, dir: btn.dataset.dir }))) return;
+  const r = await dashboard.accounts[action](id);
+  if (!r.ok) return toast(actionError(r.error));
+  if (action === 'login') toast(t('sAccLoginStarted'));
+  if (action === 'copyCommand') toast(t('sAccCopied'));
+  renderAccounts(r.payload);
+}
+
+$('#settings-form').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-acc]');
+  if (btn) {
+    e.preventDefault();
+    runAccountAction(btn.dataset.acc, btn.dataset.id, btn);
+    return;
+  }
+  if (e.target.id === 'cli-install') {
+    e.preventDefault();
+    dashboard.openUrl('https://docs.claude.com/en/docs/claude-code/setup');
+  }
+});
+
+async function addAccount() {
+  const input = $('#acc-new-name');
+  const name = input.value.trim();
+  if (!name) {
+    toast(t('sAccNameRequired'));
+    input.focus();
+    return;
+  }
+  const r = await dashboard.accounts.add(name, true);
+  if (!r.ok) return toast(actionError(r.error));
+  input.value = '';
+  toast(t('sAccLoginStarted'));
+  renderAccounts(r.payload);
+}
+$('#acc-add').addEventListener('click', addAccount);
+$('#acc-new-name').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault(); // add the account instead of submitting the whole dialog
+    addAccount();
+  }
+});
+$('#acc-add-folder').addEventListener('click', async () => {
+  const r = await dashboard.accounts.addFolder();
+  if (r.ok && r.account) renderAccounts(r.payload);
+});
+
+/** Names and visibility from the account rows, merged into fresh settings on save. */
+function collectAccountEdits(value) {
+  const claude = { labels: { ...value.claude.labels }, hidden: [...value.claude.hidden], accounts: value.claude.accounts.map((a) => ({ ...a })) };
+  const ag = { labels: { ...value.antigravity.labels }, hidden: [...value.antigravity.hidden] };
+  document.querySelectorAll('.acc-row').forEach((row) => {
+    const id = row.dataset.id;
+    const name = row.querySelector('.acc-name').value.trim();
+    const show = row.querySelector('.acc-show').checked;
+    const target = row.dataset.kind === 'antigravity' ? ag : claude;
+    target.hidden = target.hidden.filter((h) => h !== id);
+    if (!show) target.hidden.push(id);
+    const added = row.dataset.account && claude.accounts.find((a) => a.id === row.dataset.account);
+    if (added) {
+      if (name) added.name = name;
+    } else if (name) target.labels[id] = name;
+    else delete target.labels[id];
+  });
+  return { claude, ag };
+}
+
 async function openSettings() {
   const p = await dashboard.getSettings();
   applyPrefs(p);
@@ -537,21 +718,17 @@ async function openSettings() {
   f.claudeEnabled.checked = v.claude.enabled;
   f.agEnabled.checked = v.antigravity.enabled;
   f.quotaProbe.checked = v.antigravity.quotaProbe;
-  f.extraConfigDirs.value = v.claude.extraConfigDirs.join('\n');
   f.agDataDirs.value = v.antigravity.dataDirs.join('\n');
   const home = p.platform === 'win32' ? 'C:\\Users\\you' : '/Users/you';
   const sep = p.platform === 'win32' ? '\\' : '/';
-  $('#extra-dirs').placeholder = `${home}${sep}.claude-work`;
   $('#ag-dirs').placeholder = `${home}${sep}.gemini${sep}antigravity`;
   f.shareEnabled.checked = v.share.enabled;
   f.sharePort.value = v.share.port;
   $('#firewall-hint').textContent = p.platform === 'darwin' ? t('sFirewallMac') : p.platform === 'win32' ? t('sFirewallWin') : '';
   fillShare(p);
 
-  const seen = new Set();
-  const accts = (snapshot ? snapshot.claude : []).filter((a) => !seen.has(a.id) && seen.add(a.id));
-  $('#label-fields').innerHTML = accts.map((a) => `<label class="row indent"><span>${esc(t('sAccountName'))} · ${esc(a.profile && a.profile.email ? a.profile.email : t('claudeAccountN', { n: a.ordinal }))}${a.remote ? ` @${esc(a.machine)}` : ''}</span>
-      <input type="text" data-label="${esc(a.id)}" value="${esc(v.claude.labels[a.id] || '')}" placeholder="${esc(accountName({ ...a, label: a.profile && a.profile.email }))}" /></label>`).join('');
+  accDraft = new Map();
+  renderAccounts(p);
 
   draftRemotes = v.remotes.map((r) => ({ ...r, urls: [...r.urls] }));
   renderRemotes();
@@ -581,11 +758,7 @@ $('#settings-form').addEventListener('submit', async (e) => {
   const { value } = await dashboard.getSettings();
   const f = $('#settings-form');
   const lines = (s) => s.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
-  const labels = { ...value.claude.labels };
-  document.querySelectorAll('[data-label]').forEach((i) => {
-    if (i.value.trim()) labels[i.dataset.label] = i.value.trim();
-    else delete labels[i.dataset.label];
-  });
+  const acc = collectAccountEdits(value);
   // Something still typed in the "add computer" box counts as added.
   if ($('#remote-input').value.trim()) {
     const parsed = await dashboard.parseRemote($('#remote-input').value);
@@ -599,8 +772,8 @@ $('#settings-form').addEventListener('submit', async (e) => {
     closeToTray: f.closeToTray.checked,
     share: { ...value.share, enabled: f.shareEnabled.checked, port: Math.min(65535, Math.max(1024, Number(f.sharePort.value) || 47821)) },
     remotes: draftRemotes,
-    claude: { ...value.claude, enabled: f.claudeEnabled.checked, extraConfigDirs: lines(f.extraConfigDirs.value), labels },
-    antigravity: { ...value.antigravity, enabled: f.agEnabled.checked, quotaProbe: f.quotaProbe.checked, dataDirs: lines(f.agDataDirs.value) },
+    claude: { ...value.claude, enabled: f.claudeEnabled.checked, labels: acc.claude.labels, hidden: acc.claude.hidden, accounts: acc.claude.accounts },
+    antigravity: { ...value.antigravity, enabled: f.agEnabled.checked, quotaProbe: f.quotaProbe.checked, dataDirs: lines(f.agDataDirs.value), labels: acc.ag.labels, hidden: acc.ag.hidden },
   });
   $('#settings').close();
   applyPrefs(saved);
@@ -608,6 +781,12 @@ $('#settings-form').addEventListener('submit', async (e) => {
 });
 
 // ---------- wiring ----------
+for (const sel of ['#accounts', '#compact']) {
+  $(sel).addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-acc]');
+    if (btn) runAccountAction(btn.dataset.acc, btn.dataset.id, btn);
+  });
+}
 $('#btn-refresh').addEventListener('click', () => dashboard.refresh());
 $('#btn-settings').addEventListener('click', openSettings);
 $('#btn-pin').addEventListener('click', async (e) => {
@@ -624,5 +803,6 @@ setInterval(updatedLine, 5000);
 dashboard.onSnapshot((s) => {
   snapshot = s;
   render();
+  if ($('#settings').open && prefs) dashboard.getSettings().then(renderAccounts);
 });
 dashboard.getSettings().then(applyPrefs);

@@ -10,4 +10,15 @@ contextBridge.exposeInMainWorld('dashboard', {
   parseRemote: (text) => ipcRenderer.invoke('remote:parse', text),
   copy: (text) => ipcRenderer.invoke('clipboard:write', text),
   openPath: (p) => ipcRenderer.invoke('open:path', p),
+  openUrl: (u) => ipcRenderer.invoke('open:url', u),
+  accounts: {
+    add: (name, login) => ipcRenderer.invoke('accounts:add', { name, login }),
+    addFolder: () => ipcRenderer.invoke('accounts:addFolder'),
+    login: (id) => ipcRenderer.invoke('accounts:login', id),
+    logout: (id) => ipcRenderer.invoke('accounts:logout', id),
+    open: (id) => ipcRenderer.invoke('accounts:open', id),
+    copyCommand: (id) => ipcRenderer.invoke('accounts:copyCommand', id),
+    showFolder: (id) => ipcRenderer.invoke('accounts:showFolder', id),
+    remove: (id) => ipcRenderer.invoke('accounts:remove', id),
+  },
 });

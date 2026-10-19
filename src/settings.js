@@ -17,16 +17,23 @@ const DEFAULTS = {
   remotes: [],
   claude: {
     enabled: true,
-    // Extra Claude Code config dirs (CLAUDE_CONFIG_DIR) for another CLI login
+    // Accounts added in the dashboard, each its own Claude Code profile folder: [{ id, name, dir }]
+    accounts: [],
+    // Legacy: extra CLAUDE_CONFIG_DIR folders (migrated into accounts)
     extraConfigDirs: [],
-    // account id -> display name
+    // account id -> display name (for auto-detected accounts)
     labels: {},
+    // account ids not shown on the dashboard
+    hidden: [],
+    // Optional explicit path to the Claude Code CLI
+    cliPath: '',
   },
   antigravity: {
     enabled: true,
     // Empty = auto-detect
     dataDirs: [],
     labels: {},
+    hidden: [],
     // Ask the locally running Antigravity language server for model quota (reads its CSRF token from the process list).
     quotaProbe: false,
   },
@@ -43,8 +50,15 @@ function merge(base, over) {
   return out;
 }
 
-/** Older files stored a single `url` per remote. */
+/** Older files: a single `url` per remote; extra Claude config dirs instead of named accounts. */
 function migrate(v) {
+  const accounts = v.claude.accounts || [];
+  for (const d of v.claude.extraConfigDirs || []) {
+    if (!d || accounts.some((a) => path.resolve(a.dir) === path.resolve(d))) continue;
+    accounts.push({ id: `dir-${require('crypto').createHash('sha1').update(path.resolve(d)).digest('hex').slice(0, 10)}`, name: path.basename(d), dir: path.resolve(d) });
+  }
+  v.claude.accounts = accounts;
+  v.claude.extraConfigDirs = [];
   v.remotes = (v.remotes || [])
     .map((r) => ({ name: r.name || '', urls: r.urls || (r.url ? [r.url] : []), token: r.token || '' }))
     .filter((r) => r.urls.length);
