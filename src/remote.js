@@ -47,12 +47,18 @@ function applyShare(share, getSnapshot, onStatus) {
   server.listen(share.port, share.host || '0.0.0.0', () => onStatus({ running: true, port: share.port, addresses: lanAddresses() }));
 }
 
+const VIRTUAL_NIC = /vmware|virtualbox|vbox|vethernet|hyper-v|docker|wsl|loopback|utun|bridge|awdl|llw|tailscale|zerotier/i;
+
+/** LAN IPv4 addresses, real Wi-Fi/Ethernet adapters first (VMware & co. tend to be listed before them). */
 function lanAddresses() {
   const out = [];
-  for (const list of Object.values(os.networkInterfaces())) {
-    for (const a of list || []) if (a.family === 'IPv4' && !a.internal) out.push(a.address);
+  for (const [name, list] of Object.entries(os.networkInterfaces())) {
+    for (const a of list || []) {
+      if (a.family !== 'IPv4' || a.internal || a.address.startsWith('169.254.')) continue;
+      out.push({ address: a.address, virtual: VIRTUAL_NIC.test(name) });
+    }
   }
-  return out;
+  return out.sort((x, y) => x.virtual - y.virtual).map((x) => x.address);
 }
 
 function normalizeUrl(url) {
