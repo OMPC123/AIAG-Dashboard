@@ -1,12 +1,11 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell, screen, clipboard, dialog } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell, screen, clipboard } = require('electron');
 const os = require('os');
 const path = require('path');
 const zlib = require('zlib');
 const { Worker } = require('worker_threads');
-const { applyShare, fetchRemote, newToken, makeCode, parseCode } = require('./remote');
+const { applyShare, fetchRemote, newToken, newMachineId, makeCode, parseCode, baseOf } = require('./remote');
 const { Settings } = require('./settings');
 const I18N = require('./i18n');
-const Accounts = require('./accounts');
 
 let win = null;
 let tray = null;
@@ -18,8 +17,6 @@ let localSnapshot = null;
 let shareStatus = { running: false };
 let collecting = false;
 let t = I18N.create('en');
-// Time "Sign in" was last clicked is stored on the account (lastLoginAttempt), so the UI can explain a
-// sign-in that never completed, even after a restart.
 
 // Pin the settings folder: Electron derives it from productName, which would move it between dev and packaged builds.
 app.setPath('userData', path.join(app.getPath('appData'), 'aiag-dashboard'));
@@ -44,17 +41,36 @@ function applyLanguage() {
 
 function shareCode() {
   if (!shareStatus.running) return null;
-  return makeCode({ name: machineName(), port: shareStatus.port, token: settings.value.share.token, addresses: shareStatus.addresses });
+  return makeCode({ id: settings.value.machineId, name: machineName(), port: shareStatus.port, token: settings.value.share.token, addresses: shareStatus.addresses });
 }
 
 function applyShareSettings() {
-  applyShare(settings.value.share, () => localSnapshot, (st) => {
-    shareStatus = st;
-    if (lastSnapshot) {
-      lastSnapshot.share = st;
-      send(lastSnapshot);
-    }
+  applyShare(
+    settings.value.share,
+    () => localSnapshot,
+    (st) => {
+      shareStatus = st;
+      if (lastSnapshot) {
+        lastSnapshot.share = st;
+        send(lastSnapshot);
+      }
+    },
+    () => ({ id: settings.value.machineId, name: machineName() })
+  );
+}
+
+/** A remote machine turned up at a new address (its IP changed): remember it, so restarts try it first. */
+function rememberRemoteAddress(remote, base) {
+  settings.value.remotes = settings.value.remotes.map((r) => {
+    if (r.token !== remote.token) return r;
+    const others = r.urls.filter((u) => baseOf(/^https?:\/\//i.test(u) ? u : `http://${u}`) !== base);
+    const isIp = (u) => /^(https?:\/\/)?\d+\.\d+\.\d+\.\d+/.test(u);
+    // newest address first; keep host names like "mac.local" and the few most recent IPs
+    const urls = [base, ...others.filter(isIp).slice(0, 3), ...others.filter((u) => !isIp(u))];
+    return { ...r, urls, lastFoundAt: Date.now() };
   });
+  settings.write();
+  setTimeout(collect, 500); // show it right away instead of at the next interval
 }
 
 const send = (snap) => win && !win.isDestroyed() && win.webContents.send('snapshot', snap);
@@ -151,13 +167,13 @@ async function collect() {
     };
 
     // Merge in other machines (only their own local data, so two PCs pointing at each other don't loop).
-    const remotes = await Promise.all((s.remotes || []).map(fetchRemote));
+    const remotes = await Promise.all((s.remotes || []).map((r) => fetchRemote(r, { onFound: rememberRemoteAddress })));
     const machines = [{ name: machine, local: true, ok: true, at }];
     let claude = s.claude.enabled ? [...localSnapshot.claude] : [];
     let antigravity = s.antigravity.enabled ? [...localSnapshot.antigravity] : [];
     for (const r of remotes) {
       const name = r.remote.name || (r.snap && r.snap.machine) || (r.remote.urls || [])[0];
-      machines.push({ name, ok: r.ok, at: r.snap && r.snap.at });
+      machines.push({ name, ok: r.ok, at: r.snap && r.snap.at, address: r.ok && r.url ? baseOf(r.url) : null });
       if (!r.ok) errors.push({ key: 'err_remote', vars: { name }, cause: r.error, stale: !!r.snap });
       if (!r.snap) continue;
       const stale = !r.ok;
@@ -171,26 +187,20 @@ async function collect() {
       if (s.claude.labels[a.id]) a.label = s.claude.labels[a.id];
     }
     for (const g of antigravity) if (s.antigravity.labels[g.id]) g.label = s.antigravity.labels[g.id];
-    const signedIn = new Set(claude.filter((a) => a.account && a.loggedIn).map((a) => a.account.id));
-    if (s.claude.accounts.some((a) => signedIn.has(a.id) && a.lastLoginAttempt)) {
-      settings.value.claude.accounts = s.claude.accounts.map((a) => (signedIn.has(a.id) ? { ...a, lastLoginAttempt: undefined } : a));
-      settings.write();
-    }
     // Settings -> Accounts lists this machine's accounts, including ones hidden or merged below.
     const allClaude = [...claude];
     const allAg = [...antigravity];
 
     // An account seen here only as an empty desktop-app entry is shown by the machine that actually uses it,
-    // carrying over the name / account type given to it here.
+    // carrying over the name given to it here.
     const localEmpty = new Map(claude.filter((a) => !a.remote && !a.plan && !a.counts.total).map((a) => [a.id, a]));
     const remoteIds = new Set(claude.filter((a) => a.remote).map((a) => a.id));
     for (const a of claude) {
       const mine = a.remote && localEmpty.get(a.id);
       if (!mine) continue;
-      if (mine.account || s.claude.labels[a.id]) a.label = mine.label;
+      if (s.claude.labels[a.id]) a.label = mine.label;
       const seen = Math.max(a.desktopLastSeen || 0, mine.desktopLastSeen || 0);
       if (seen) a.desktopLastSeen = seen;
-      if (mine.account && mine.account.type === 'web') a.account = mine.account;
     }
     claude = claude.filter((a) => a.remote || !remoteIds.has(a.id) || !localEmpty.has(a.id));
     // Accounts the user chose to hide (Settings -> Accounts).
@@ -296,7 +306,7 @@ function createWindow() {
   win.on('focus', () => {
     if (Date.now() - lastFocusRefresh < 3000) return;
     lastFocusRefresh = Date.now();
-    collect(); // e.g. just signed in to an account in a terminal window
+    collect();
   });
   win.on('close', (e) => {
     if (!quitting && settings.value.closeToTray) {
@@ -321,9 +331,6 @@ function settingsPayload() {
     lang: currentLang(),
     share: shareStatus,
     code: shareCode(),
-    cli: Accounts.findClaudeCli(settings.value.claude.cliPath),
-    loginAttempts: Object.fromEntries(settings.value.claude.accounts.filter((a) => a.lastLoginAttempt).map((a) => [a.id, a.lastLoginAttempt])),
-    accountsRoot: Accounts.ACCOUNTS_ROOT,
   };
 }
 
@@ -331,6 +338,7 @@ app.whenReady().then(() => {
   if (!gotLock) return;
   settings = new Settings(app.getPath('userData'));
   if (!settings.value.share.token) settings.patch({ share: { token: newToken() } });
+  if (!settings.value.machineId) settings.patch({ machineId: newMachineId() });
   applyLanguage();
   applyShareSettings();
 
@@ -369,66 +377,6 @@ app.whenReady().then(() => {
   ipcMain.handle('clipboard:write', (_e, text) => clipboard.writeText(String(text || '')));
   ipcMain.handle('open:path', (_e, p) => typeof p === 'string' && shell.openPath(p));
   ipcMain.handle('open:url', (_e, u) => typeof u === 'string' && /^https:\/\//.test(u) && shell.openExternal(u));
-
-  // ---- accounts (each Claude account = its own Claude Code profile folder) ----
-  const findAccount = (id) => settings.value.claude.accounts.find((a) => a.id === id);
-  const accountAction = (fn) => async (_e, arg) => {
-    try {
-      const result = await fn(arg);
-      return { ok: true, ...(result || {}), payload: settingsPayload() };
-    } catch (e) {
-      return { ok: false, error: e.code || e.message, payload: settingsPayload() };
-    }
-  };
-  ipcMain.handle('accounts:add', accountAction(({ name, login, type, accountUuid }) => {
-    const account = type === 'web'
-      ? Accounts.createWebAccount(name, accountUuid)
-      : Accounts.createAccount(name, settings.value.claude.accounts);
-    if (login && account.type !== 'web') {
-      Accounts.loginAccount(account, settings.value.claude.cliPath);
-      account.lastLoginAttempt = Date.now();
-    }
-    settings.patch({ claude: { accounts: [...settings.value.claude.accounts, account] } });
-    collect();
-    return { account };
-  }));
-  const updateAccount = (id, fn) => {
-    settings.value.claude = { ...settings.value.claude, accounts: settings.value.claude.accounts.map((a) => (a.id === id ? fn({ ...a }) : a)) };
-    settings.write();
-    collect();
-  };
-  // web account <-> the account the Claude desktop app signed in to
-  ipcMain.handle('accounts:link', accountAction(({ id, accountUuid }) => updateAccount(id, (a) => ({ ...a, accountUuid: accountUuid || null }))));
-  // A Claude Code sign-in that can't work (e.g. free plan): keep the account, tracked through the desktop app.
-  ipcMain.handle('accounts:convertToWeb', accountAction((id) => {
-    updateAccount(id, (a) => ({ id: a.id, name: a.name, type: 'web', accountUuid: null }));
-  }));
-  ipcMain.handle('accounts:addFolder', accountAction(async () => {
-    const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'showHiddenFiles', 'createDirectory'], defaultPath: os.homedir() });
-    if (r.canceled || !r.filePaths[0]) return { canceled: true };
-    const dir = path.resolve(r.filePaths[0]);
-    if (settings.value.claude.accounts.some((a) => path.resolve(a.dir) === dir)) return { duplicate: true };
-    const account = Accounts.accountFromFolder(dir);
-    settings.patch({ claude: { accounts: [...settings.value.claude.accounts, account] } });
-    collect();
-    return { account };
-  }));
-  ipcMain.handle('accounts:login', accountAction((id) => {
-    Accounts.loginAccount(findAccount(id), settings.value.claude.cliPath);
-    updateAccount(id, (a) => ({ ...a, lastLoginAttempt: Date.now() }));
-  }));
-  ipcMain.handle('accounts:logout', accountAction((id) => void Accounts.logoutAccount(findAccount(id), settings.value.claude.cliPath)));
-  ipcMain.handle('accounts:open', accountAction((id) => void Accounts.openClaude(findAccount(id), settings.value.claude.cliPath)));
-  ipcMain.handle('accounts:copyCommand', accountAction((id) => void clipboard.writeText(Accounts.shellCommand(findAccount(id)))));
-  ipcMain.handle('accounts:showFolder', accountAction((id) => void shell.openPath(findAccount(id).dir)));
-  ipcMain.handle('accounts:remove', accountAction((id) => {
-    // Only forgets the account here; the profile folder (and its sign-in) stays on disk.
-    const c = settings.value.claude;
-    const accountKey = `account:${id}`;
-    settings.value.claude = { ...c, accounts: c.accounts.filter((a) => a.id !== id), hidden: c.hidden.filter((h) => h !== accountKey) };
-    settings.write();
-    collect();
-  }));
 
   tray = new Tray(icon('idle'));
   buildTrayMenu();

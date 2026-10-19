@@ -2,14 +2,14 @@
 
 [繁體中文說明](README.zh-TW.md)
 
-A desktop dashboard for people who run AI coding agents. It shows **Claude** (any number of accounts) and **Antigravity** side by side: whether each agent is working, plan usage, token usage and recent sessions.
+A desktop dashboard for people who run AI coding agents. It shows **Claude** and **Antigravity** side by side, across all your computers: whether each agent is working, plan usage, token usage and recent sessions.
 
 Everything is read from files those apps already write on your computer. No API keys, no sign-in, and nothing is sent anywhere unless you turn on sharing between your own computers.
 
 - **Claude**: 5-hour and 7-day plan usage per account (with history), live session status (working / idle), tokens in/out/cache per day and per hour, recent sessions with project and model.
 - **Antigravity**: app status, conversations and agent steps, and (optional) remaining model quota.
 - **Compact view**: one row per account, so it fits as a small always-on-top widget. **Full view**: charts and session lists.
-- **Several computers**: run it on each machine and see them all in one window.
+- **Several computers**: run it on each machine and see them all in one window; IP address changes are handled automatically.
 - Windows, macOS and Linux. English and Traditional Chinese (follows the system language).
 
 ## Install
@@ -50,29 +50,11 @@ Shortcuts for later: double-click `AIAG Dashboard.bat` (Windows) or `AIAG Dashbo
 
 ## Accounts
 
-*Settings → Accounts* lists every account on this computer. You can rename it, hide it from the dashboard, or add a new one.
+*Settings → Accounts* lists the accounts found on this computer: the Claude account(s) the Claude desktop app and Claude Code have used, and the account signed in to Antigravity. You can give each one a display name or hide it from the dashboard. Accounts on other computers are managed on those computers.
 
-**Two kinds of Claude account** (pick one when adding):
+The dashboard does not sign in to anything itself: one computer runs one Claude account at a time, so to watch a second account, run the dashboard on the computer that uses it and add that computer (see *Several computers*).
 
-- **Claude Code account**: Pro, Max, or a Team / Enterprise seat that includes Claude Code. Shows sessions, tokens and working status (and plan % if the desktop app is signed in to it).
-- **Web / desktop-app account**: the free plan, or any account without Claude Code. There is nothing to sign in to in the dashboard: sign in to the account in the Claude desktop app, then pick it from the list when adding. Claude does not report usage % for the free plan, so its card shows when it was last used in the desktop app.
-
-If a Claude Code sign-in does not complete (for example, the account turns out to have no Claude Code access), the account shows an explanation with a **Switch to web / desktop-app account** button.
-
-**Add a Claude Code account**: type a name (e.g. “Work”) and click **Add and sign in**. The dashboard creates a separate Claude Code profile folder for it (`~/.claude-accounts/<name>`) and opens the official Claude Code sign-in (`claude auth login`) in a terminal window; you finish signing in in your browser. The dashboard never sees your password or tokens; Claude Code stores the sign-in in that folder (on macOS, in the Keychain).
-
-For each added account:
-
-- **Open Claude Code** starts Claude Code as that account. Its sessions, tokens and working status then show on the dashboard.
-- **Copy command** copies a one-line command to run Claude Code as that account from any terminal.
-- **Sign out**, **Folder** and **Remove** are also there. Remove only forgets the account in the dashboard; the folder and its sign-in stay on disk.
-- **Add existing folder…** registers a folder you already use with `CLAUDE_CONFIG_DIR`.
-
-Signing in needs Claude Code. The dashboard finds it on your PATH, in the usual install folders, or inside the Claude desktop app. If none is found, *Settings* links to the install guide.
-
-Plan usage % (5-hour / 7-day) comes from the Claude desktop app, so it appears for accounts you have signed in to there. Accounts used only through Claude Code show sessions, tokens and status.
-
-Antigravity signs in with Google inside the Antigravity app itself; the dashboard lists the account that app is using. You can rename or hide it.
+An account with no usage data (for example a free-plan account, which Claude reports no usage % for, and which has no Claude Code activity) gets a short card saying so, with the last time it was used in the Claude desktop app.
 
 ## Where the data comes from
 
@@ -90,7 +72,7 @@ Notes:
 
 - Plan usage % is recorded by the **Claude desktop app** while you are signed in to that account. Accounts used only through the Claude Code CLI show sessions and tokens but no plan %.
 - Token counts cover Claude Code on this computer. Chats on claude.ai in a browser are not stored locally and are not counted.
-- To track another Claude account, add it under *Settings → Accounts* (see above).
+- To watch a Claude account used on another computer, add that computer (see *Several computers*).
 - Antigravity does not store token counts locally, so activity is shown as conversations and agent steps.
 
 ## Several computers
@@ -101,6 +83,8 @@ Each computer can only read its own files, so run the dashboard on every compute
 2. On the computer you **look at**: paste the code under *Other computers to read from* → *Add* → *Save*.
 
 Both must be on the same network (or a VPN such as Tailscale). Sharing is read-only, protected by the token inside the code, and only sends counts, session titles and project folder names, never conversation content. *Regenerate* invalidates the old code.
+
+**IP address changes** (e.g. a laptop getting a new address from the router) are handled automatically. When a computer stops answering at every known address, the dashboard probes the local network on the share port in the background. Only the computer that accepts the code's token, and has the same computer ID, is accepted. Its new address is saved, so the next refresh and later restarts use it. A computer that stays away (asleep, switched off) is re-checked with growing intervals, from 1 to 10 minutes. The connection code also contains the computer's name (`<name>.local`), which keeps working across IP changes on most home and office networks.
 
 ### If it can't connect
 

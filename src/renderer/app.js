@@ -62,16 +62,11 @@ const machineTag = (x) =>
   `<span class="machine${x.remote ? ' remote' : ''}${x.stale ? ' stale' : ''}" title="${esc(x.stale ? t('staleTitle', { when: rel(x.collectedAt) }) : t('machineTitle'))}">💻 ${esc(x.machine)}${x.stale ? ' · ' + esc(t('offline')) : ''}</span>`;
 const shortModel = (m) => (m || '').replace(/^claude-/, '').replace(/-\d{8}$/, '');
 const dateTime = (ms, opts) => new Date(ms).toLocaleString(t.lang, opts);
-const isWeb = (a) => !!(a.account && a.account.type === 'web');
-const needsLogin = (a) => !!(a.account && !isWeb(a) && !a.loggedIn && !a.remote);
 /** Nothing to chart: no plan %, no Claude Code activity (e.g. a free-plan account used only on claude.ai / the desktop app). */
-const noData = (a) => !needsLogin(a) && !a.plan && !(a.counts && a.counts.total) && !(a.today && a.today.messages);
+const noData = (a) => !a.plan && !(a.counts && a.counts.total) && !(a.today && a.today.messages);
 /** The desktop app checks usage every few minutes while signed in, so a recent check means it is in use there. */
 const desktopActive = (a) => !!(a.desktopLastSeen && Date.now() - a.desktopLastSeen < 30 * 60 * 1000);
-const SIGNIN_GRACE_MS = 20000;
-const claudeState = (a) =>
-  needsLogin(a) ? 'signedout' : a.counts.working ? 'working' : a.counts.idle ? 'idle' : desktopActive(a) ? 'desktop' : 'off';
-const accButton = (action, a, label, cls = '') => `<button type="button" class="btn small ${cls}" data-acc="${action}" data-id="${esc(a.account.id)}">${esc(label)}</button>`;
+const claudeState = (a) => (a.counts.working ? 'working' : a.counts.idle ? 'idle' : desktopActive(a) ? 'desktop' : 'off');
 const agState = (g) => (!g.appRunning ? 'off' : g.counts.working ? 'working' : 'idle');
 
 // ---------- tooltip & toast ----------
@@ -227,22 +222,8 @@ function lowestQuota(g) {
 }
 
 // ---------- full view ----------
-function signInCard(a, color) {
-  return `<article class="card" data-id="${esc(a.key)}">
-    <header class="card-h">
-      <div class="acct-title"><i class="chip" style="background:${color}"></i>
-        <div style="min-width:0"><h2 class="acct-name">${esc(accountName(a))}</h2><div class="acct-meta">${machineTag(a)} Claude</div></div></div>
-      <div class="card-state">${stateTag('signedout')}</div>
-    </header>
-    <p class="empty">${esc(t('accNotSignedInBody'))}</p>
-    <p class="hint mono">${esc(t('accFolderLabel', { dir: a.account.dir }))}</p>
-    <div class="acc-actions">${accButton('login', a, t('sAccLogin'), 'primary')}</div>
-  </article>`;
-}
-
 function lastSeenText(a) {
   if (a.desktopLastSeen) return t('cardLastSeen', { when: `${dateTime(a.desktopLastSeen, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} (${rel(a.desktopLastSeen)})` });
-  if (isWeb(a) && !a.account.accountUuid) return t('cardWebUnlinked');
   return t('cardNeverSeen');
 }
 
@@ -250,7 +231,7 @@ function noDataCard(a, color) {
   return `<article class="card${a.stale ? ' stale' : ''}" data-id="${esc(a.key)}">
     <header class="card-h">
       <div class="acct-title"><i class="chip" style="background:${color}"></i>
-        <div style="min-width:0"><h2 class="acct-name">${esc(accountName(a))}</h2><div class="acct-meta">${machineTag(a)} Claude${isWeb(a) ? ' · ' + esc(t('sAccTypeWeb')) : ''}</div></div></div>
+        <div style="min-width:0"><h2 class="acct-name">${esc(accountName(a))}</h2><div class="acct-meta">${machineTag(a)} Claude</div></div></div>
       <div class="card-state">${stateTag(claudeState(a))}</div>
     </header>
     <p class="note-box">ℹ ${esc(t('cardNoDataNote'))}</p>
@@ -259,7 +240,6 @@ function noDataCard(a, color) {
 }
 
 function claudeCard(a, color) {
-  if (needsLogin(a)) return signInCard(a, color);
   if (noData(a)) return noDataCard(a, color);
   const p = a.profile || {};
   const meta = [p.orgName, p.billingType && p.billingType.replace(/_/g, ' ')].filter(Boolean).join(' · ');
@@ -268,7 +248,7 @@ function claudeCard(a, color) {
     <header class="card-h">
       <div class="acct-title"><i class="chip" style="background:${color}"></i>
         <div style="min-width:0"><h2 class="acct-name">${esc(accountName(a))}</h2><div class="acct-meta">${machineTag(a)} Claude${meta ? ' · ' + esc(meta) : ''}</div></div></div>
-      <div class="card-state">${stateTag(claudeState(a))}<span class="badge">${esc(t('workIdleBadge', { w: a.counts.working, i: a.counts.idle }))}</span>${a.account && !a.remote ? accButton('open', a, t('sAccOpen')) : ''}</div>
+      <div class="card-state">${stateTag(claudeState(a))}<span class="badge">${esc(t('workIdleBadge', { w: a.counts.working, i: a.counts.idle }))}</span></div>
     </header>
     <div class="section-label">${esc(t('planUsage'))}</div>
     ${a.plan ? `<div class="meters">${meter(t('window5h'), a.plan.fiveHour, a.plan.sampledAt)}${meter(t('window7d'), a.plan.sevenDay)}</div>
@@ -387,7 +367,7 @@ function renderFull(claude, antigravity) {
   claude.forEach((a, i) => {
     const card = document.querySelector(`.card[data-id="${CSS.escape(a.key)}"]`);
     const color = SERIES[i % SERIES.length];
-    if (needsLogin(a) || noData(a)) return;
+    if (noData(a)) return;
     barChart(card.querySelector('.hourly-chart'), {
       categories: a.hourly.map((h) => `${new Date(h.t).getHours()}`),
       series: [{ name: t('outTokens'), color, values: a.hourly.map((h) => h.output) }],
@@ -436,14 +416,6 @@ function renderCompact(claude, antigravity) {
   claude.forEach((a, i) => {
     const color = SERIES[i % SERIES.length];
     const p = a.plan || {};
-    if (needsLogin(a)) {
-      rows.push(`<div class="crow">
-      <div class="c-name"><i class="chip" style="background:${color}"></i><div class="c-text"><b>${esc(accountName(a))}</b><span>${machineTag(a)} Claude</span></div></div>
-      <div class="c-state">${stateTag('signedout')}</div>
-      <div class="c-wide">${accButton('login', a, t('sAccLogin'), 'primary')}</div>
-    </div>`);
-      return;
-    }
     if (noData(a)) {
       rows.push(`<div class="crow${a.stale ? ' stale' : ''}">
       <div class="c-name"><i class="chip" style="background:${color}"></i><div class="c-text"><b>${esc(accountName(a))}</b><span>${machineTag(a)} Claude</span></div></div>
@@ -582,128 +554,36 @@ function fillShare(p) {
   $('#share-box').hidden = !$('#settings-form').shareEnabled.checked;
 }
 
-// ---------- settings: accounts ----------
+// ---------- settings: accounts (rename / show-hide what this computer detected) ----------
 // What the user has typed / toggled in the account rows, kept across re-renders while the dialog is open.
 let accDraft = new Map();
 
-/** Rows for this computer's accounts: everything detected (incl. hidden) plus added accounts not collected yet. */
-function accountRows(p) {
+function accountRows() {
   const all = (snapshot && snapshot.allAccounts) || { claude: snapshot ? snapshot.claude : [], antigravity: snapshot ? snapshot.antigravity : [] };
-  // Account type / link come from settings (just changed by a button), not from the last data refresh.
-  const configured = new Map(p.value.claude.accounts.map((acc) => [acc.id, acc]));
-  const claude = all.claude
-    .filter((a) => !a.remote && (!a.account || configured.has(a.account.id)))
-    .map((a) => (a.account ? { ...a, account: { ...a.account, ...configured.get(a.account.id) } } : a));
-  for (const acc of p.value.claude.accounts) {
-    if (!claude.some((a) => a.account && a.account.id === acc.id)) {
-      claude.push({ id: acc.accountUuid || `account:${acc.id}`, account: acc, label: acc.name, loggedIn: false, profile: null, ordinal: claude.length + 1 });
-    }
-  }
-  return { claude, antigravity: all.antigravity.filter((g) => !g.remote) };
+  return { claude: all.claude.filter((a) => !a.remote), antigravity: all.antigravity.filter((g) => !g.remote) };
 }
 
 function accountRowHtml(kind, a, p) {
   const key = `${kind}|${a.id}`;
   const d = accDraft.get(key) || {};
-  const hiddenList = kind === 'claude' ? p.value.claude.hidden : p.value.antigravity.hidden;
-  const shown = d.show ?? !hiddenList.includes(a.id);
-  let name;
-  let status;
-  let actions = '';
-  if (kind === 'antigravity') {
-    name = d.name ?? (p.value.antigravity.labels[a.id] || '');
-    status = `<span class="hint">${esc(a.label)} · ${esc(t('sAccDetected'))}</span>`;
-  } else if (a.account && a.account.type === 'web') {
-    name = d.name ?? a.account.name;
-    const id = esc(a.account.id);
-    status = a.account.accountUuid
-      ? `<span class="hint">${esc(t('sAccWebLinked', { when: a.desktopLastSeen ? rel(a.desktopLastSeen) : '—' }))}</span>`
-      : `<span class="acc-warn">○ ${esc(t('sAccWebUnlinked'))}</span>`;
-    const options = linkCandidates(a.account.accountUuid);
-    actions = `<div class="acc-actions">
-        <select class="acc-link" data-id="${id}" aria-label="${esc(t('sAccLinkLabel'))}">${linkOptionsHtml(options, a.account.accountUuid)}</select>
-        <button type="button" class="btn small danger" data-acc="remove" data-id="${id}" data-name="${esc(a.account.name)}" data-dir="—">${esc(t('sAccRemove'))}</button>
-      </div>`;
-  } else if (a.account) {
-    name = d.name ?? a.account.name;
-    const email = a.profile && a.profile.email;
-    status = a.loggedIn
-      ? `<span class="acc-ok">● ${esc(email ? t('sAccSignedInAs', { email }) : t('sAccSignedIn'))}</span>`
-      : `<span class="acc-warn">○ ${esc(t('sAccNotSignedIn'))}</span>`;
-    const id = esc(a.account.id);
-    const attempt = (p.loginAttempts || {})[a.account.id];
-    let help = '';
-    if (!a.loggedIn && attempt) {
-      help = Date.now() - attempt < SIGNIN_GRACE_MS
-        ? `<div class="acc-help">${esc(t('sAccLoginPending'))}</div>`
-        : `<div class="acc-help warn">${esc(t('sAccLoginFailed'))}
-            <div class="acc-actions"><button type="button" class="btn small primary" data-acc="convertToWeb" data-id="${id}">${esc(t('sAccConvertWeb'))}</button>
-            <button type="button" class="btn small" data-acc="login" data-id="${id}">${esc(t('sAccRetry'))}</button></div></div>`;
-    }
-    const failed = attempt && Date.now() - attempt >= SIGNIN_GRACE_MS;
-    actions = `${help}<div class="acc-actions">
-        ${a.loggedIn || failed ? '' : `<button type="button" class="btn small primary" data-acc="login" data-id="${id}">${esc(t('sAccLogin'))}</button>`}
-        ${a.loggedIn || failed ? '' : `<button type="button" class="btn small" data-acc="convertToWeb" data-id="${id}">${esc(t('sAccConvertWeb'))}</button>`}
-        <button type="button" class="btn small" data-acc="open" data-id="${id}">${esc(t('sAccOpen'))}</button>
-        <button type="button" class="btn small" data-acc="copyCommand" data-id="${id}">${esc(t('sAccCopyCmd'))}</button>
-        <button type="button" class="btn small" data-acc="showFolder" data-id="${id}" title="${esc(a.account.dir)}">${esc(t('sAccFolder'))}</button>
-        ${a.loggedIn ? `<button type="button" class="btn small" data-acc="logout" data-id="${id}">${esc(t('sAccLogout'))}</button>` : ''}
-        <button type="button" class="btn small danger" data-acc="remove" data-id="${id}" data-name="${esc(a.account.name)}" data-dir="${esc(a.account.dir)}">${esc(t('sAccRemove'))}</button>
-      </div>`;
-  } else {
-    name = d.name ?? (p.value.claude.labels[a.id] || '');
-    const email = a.profile && a.profile.email;
-    status = `<span class="hint">${esc(email || t('claudeAccountN', { n: a.ordinal }))} · ${esc(t('sAccDetected'))}</span>`;
-  }
-  const placeholder = kind === 'antigravity' ? a.label : (a.profile && a.profile.email) || t('claudeAccountN', { n: a.ordinal });
-  return `<li class="acc-row" data-key="${esc(key)}" data-kind="${kind}" data-id="${esc(a.id)}" data-account="${esc(a.account ? a.account.id : '')}">
+  const conf = kind === 'claude' ? p.value.claude : p.value.antigravity;
+  const shown = d.show ?? !conf.hidden.includes(a.id);
+  const name = d.name ?? (conf.labels[a.id] || '');
+  const detected = kind === 'antigravity' ? a.label : (a.profile && a.profile.email) || t('claudeAccountN', { n: a.ordinal });
+  const extra = kind === 'claude' && a.desktopLastSeen ? ` · ${t('cardLastSeen', { when: rel(a.desktopLastSeen) })}` : '';
+  return `<li class="acc-row" data-key="${esc(key)}" data-kind="${kind}" data-id="${esc(a.id)}">
       <input type="checkbox" class="acc-show" title="${esc(t('sAccShow'))}" aria-label="${esc(t('sAccShow'))}" ${shown ? 'checked' : ''} />
       <div class="acc-main">
-        <input type="text" class="acc-name" value="${esc(name)}" placeholder="${esc(placeholder)}" />
-        ${status}
+        <input type="text" class="acc-name" value="${esc(name)}" placeholder="${esc(detected)}" />
+        <span class="hint">${esc(detected)} · ${esc(t('sAccDetected'))}${esc(extra)}</span>
       </div>
-      ${actions}
     </li>`;
 }
 
-/** Accounts the Claude desktop app has signed in to on this computer, for linking a web account. */
-function linkCandidates(current) {
-  const all = (snapshot && snapshot.allAccounts && snapshot.allAccounts.claude) || [];
-  return all
-    .filter((a) => !a.remote && a.inDesktop && (!a.account || a.id === current))
-    .map((a) => ({ id: a.id, name: (a.profile && a.profile.email) || a.label || t('claudeAccountN', { n: a.ordinal }), seen: a.desktopLastSeen }))
-    .sort((x, y) => (y.seen || 0) - (x.seen || 0));
-}
-const linkOptionsHtml = (options, current) =>
-  [`<option value="">${esc(t('sAccLinkNone'))}</option>`, ...options.map((o) =>
-    `<option value="${esc(o.id)}" ${o.id === current ? 'selected' : ''}>${esc(t('sAccLinkOption', { name: o.name, when: o.seen ? rel(o.seen) : '—' }))}</option>`)].join('');
-
-let addType = 'code';
-function applyAddType() {
-  document.querySelectorAll('[data-acc-type]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.accType === addType)));
-  document.querySelectorAll('.acc-add-box .type-code').forEach((el) => (el.hidden = addType !== 'code'));
-  document.querySelectorAll('.acc-add-box .type-web').forEach((el) => (el.hidden = addType !== 'web'));
-  $('#acc-type-hint').textContent = t(addType === 'web' ? 'sAccTypeWebHint' : 'sAccTypeCodeHint');
-}
-document.querySelectorAll('[data-acc-type]').forEach((b) => b.addEventListener('click', () => {
-  addType = b.dataset.accType;
-  applyAddType();
-}));
-
 function renderAccounts(p) {
-  if (prefs) prefs.loginAttempts = p.loginAttempts;
-  const rows = accountRows(p);
-  const keepLink = $('#acc-link').value;
-  $('#acc-link').innerHTML = linkOptionsHtml(linkCandidates(null), null);
-  if ([...$('#acc-link').options].some((o) => o.value === keepLink)) $('#acc-link').value = keepLink;
-  applyAddType();
-  $('#acc-claude').innerHTML = rows.claude.map((a) => accountRowHtml('claude', a, p)).join('');
+  const rows = accountRows();
+  $('#acc-claude').innerHTML = rows.claude.map((a) => accountRowHtml('claude', a, p)).join('') || `<li class="hint">${esc(t('claudeMissing'))}</li>`;
   $('#acc-ag').innerHTML = rows.antigravity.map((g) => accountRowHtml('antigravity', g, p)).join('') || `<li class="hint">${esc(t('agMissing'))}</li>`;
-  const cli = p.cli;
-  $('#acc-cli').innerHTML = cli
-    ? esc(t('sCli', { path: cli.path }) + t('sCliSrc_' + cli.source))
-    : `<span class="acc-warn">${esc(t('sCliMissing'))}</span> <a href="#" id="cli-install">${esc(t('sCliInstall'))}</a>`;
-  $('#acc-add').disabled = !cli;
   $('#acc-remote-note').hidden = !((snapshot && snapshot.machines) || []).some((m) => !m.local);
 }
 
@@ -719,97 +599,17 @@ for (const sel of ['#acc-claude', '#acc-ag']) {
   });
 }
 
-function actionError(code) {
-  const key = 'err_' + code;
-  const text = t(key);
-  return text === key ? code : text;
-}
-
-async function runAccountAction(action, id, btn) {
-  if (action === 'remove') {
-    const msg = btn.dataset.dir === '—' ? t('sAccRemoveConfirmWeb', { name: btn.dataset.name }) : t('sAccRemoveConfirm', { name: btn.dataset.name, dir: btn.dataset.dir });
-    if (!confirm(msg)) return;
-  }
-  const r = await dashboard.accounts[action](id);
-  if (!r.ok) return toast(actionError(r.error));
-  if (action === 'login') toast(t('sAccLoginStarted'));
-  if (action === 'copyCommand') toast(t('sAccCopied'));
-  renderAccounts(r.payload);
-}
-
-$('#settings-form').addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-acc]');
-  if (btn) {
-    e.preventDefault();
-    runAccountAction(btn.dataset.acc, btn.dataset.id, btn);
-    return;
-  }
-  if (e.target.id === 'cli-install') {
-    e.preventDefault();
-    dashboard.openUrl('https://docs.claude.com/en/docs/claude-code/setup');
-  }
-});
-
-async function addAccount() {
-  const input = $('#acc-new-name');
-  const name = input.value.trim();
-  if (!name) {
-    toast(t('sAccNameRequired'));
-    input.focus();
-    return;
-  }
-  const r = await dashboard.accounts.add(name, true);
-  if (!r.ok) return toast(actionError(r.error));
-  input.value = '';
-  toast(t('sAccLoginStarted'));
-  renderAccounts(r.payload);
-}
-$('#acc-add').addEventListener('click', addAccount);
-$('#acc-add-web').addEventListener('click', async () => {
-  const input = $('#acc-new-name');
-  const name = input.value.trim();
-  if (!name) {
-    toast(t('sAccNameRequired'));
-    input.focus();
-    return;
-  }
-  const r = await dashboard.accounts.add(name, false, 'web', $('#acc-link').value || null);
-  if (!r.ok) return toast(actionError(r.error));
-  input.value = '';
-  renderAccounts(r.payload);
-});
-$('#acc-claude').addEventListener('change', async (e) => {
-  if (!e.target.classList.contains('acc-link')) return;
-  const r = await dashboard.accounts.link(e.target.dataset.id, e.target.value || null);
-  if (r.ok) renderAccounts(r.payload);
-});
-$('#acc-new-name').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    e.preventDefault(); // add the account instead of submitting the whole dialog
-    if (addType === 'web') $('#acc-add-web').click();
-    else addAccount();
-  }
-});
-$('#acc-add-folder').addEventListener('click', async () => {
-  const r = await dashboard.accounts.addFolder();
-  if (r.ok && r.account) renderAccounts(r.payload);
-});
-
 /** Names and visibility from the account rows, merged into fresh settings on save. */
 function collectAccountEdits(value) {
-  const claude = { labels: { ...value.claude.labels }, hidden: [...value.claude.hidden], accounts: value.claude.accounts.map((a) => ({ ...a })) };
+  const claude = { labels: { ...value.claude.labels }, hidden: [...value.claude.hidden] };
   const ag = { labels: { ...value.antigravity.labels }, hidden: [...value.antigravity.hidden] };
   document.querySelectorAll('.acc-row').forEach((row) => {
     const id = row.dataset.id;
     const name = row.querySelector('.acc-name').value.trim();
-    const show = row.querySelector('.acc-show').checked;
     const target = row.dataset.kind === 'antigravity' ? ag : claude;
     target.hidden = target.hidden.filter((h) => h !== id);
-    if (!show) target.hidden.push(id);
-    const added = row.dataset.account && claude.accounts.find((a) => a.id === row.dataset.account);
-    if (added) {
-      if (name) added.name = name;
-    } else if (name) target.labels[id] = name;
+    if (!row.querySelector('.acc-show').checked) target.hidden.push(id);
+    if (name) target.labels[id] = name;
     else delete target.labels[id];
   });
   return { claude, ag };
@@ -839,7 +639,6 @@ async function openSettings() {
   fillShare(p);
 
   accDraft = new Map();
-  addType = p.cli ? 'code' : 'web';
   renderAccounts(p);
 
   draftRemotes = v.remotes.map((r) => ({ ...r, urls: [...r.urls] }));
@@ -884,7 +683,7 @@ $('#settings-form').addEventListener('submit', async (e) => {
     closeToTray: f.closeToTray.checked,
     share: { ...value.share, enabled: f.shareEnabled.checked, port: Math.min(65535, Math.max(1024, Number(f.sharePort.value) || 47821)) },
     remotes: draftRemotes,
-    claude: { ...value.claude, enabled: f.claudeEnabled.checked, labels: acc.claude.labels, hidden: acc.claude.hidden, accounts: acc.claude.accounts },
+    claude: { ...value.claude, enabled: f.claudeEnabled.checked, labels: acc.claude.labels, hidden: acc.claude.hidden },
     antigravity: { ...value.antigravity, enabled: f.agEnabled.checked, quotaProbe: f.quotaProbe.checked, dataDirs: lines(f.agDataDirs.value), labels: acc.ag.labels, hidden: acc.ag.hidden },
   });
   $('#settings').close();
@@ -893,12 +692,6 @@ $('#settings-form').addEventListener('submit', async (e) => {
 });
 
 // ---------- wiring ----------
-for (const sel of ['#accounts', '#compact']) {
-  $(sel).addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-acc]');
-    if (btn) runAccountAction(btn.dataset.acc, btn.dataset.id, btn);
-  });
-}
 $('#btn-refresh').addEventListener('click', () => dashboard.refresh());
 $('#btn-settings').addEventListener('click', openSettings);
 $('#btn-pin').addEventListener('click', async (e) => {
@@ -911,10 +704,6 @@ addEventListener('resize', () => {
   resizeTimer = setTimeout(render, 120);
 });
 setInterval(updatedLine, 5000);
-
-setInterval(() => {
-  if ($('#settings').open && prefs && Object.keys(prefs.loginAttempts || {}).length) dashboard.getSettings().then(renderAccounts);
-}, 5000);
 
 dashboard.onSnapshot((s) => {
   snapshot = s;

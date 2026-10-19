@@ -269,7 +269,6 @@ fieldset > details { display: grid; gap: 8px; }
 .q-reset { color: var(--text-muted); font-size: 12px; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* ---------- accounts ---------- */
-.state.signedout i { background: var(--warning); }
 .acc-group { display: grid; gap: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--grid); }
 .acc-group:last-of-type { border-bottom: 0; }
 .acc-head b { font-weight: 600; }
@@ -278,23 +277,10 @@ fieldset > details { display: grid; gap: 8px; }
 .acc-row .acc-show { margin-top: 7px; }
 .acc-main { display: grid; gap: 3px; min-width: 0; }
 .acc-main .acc-name { width: 100%; }
-.acc-main .hint, .acc-ok, .acc-warn { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.acc-ok { color: var(--good); }
-.acc-warn { color: var(--warning); }
-.acc-actions { grid-column: 2; display: flex; flex-wrap: wrap; gap: 6px; }
-.card .acc-actions { margin-top: 10px; }
-.acc-add { display: flex; gap: 6px; flex-wrap: wrap; }
-.acc-add input { flex: 1; min-width: 160px; }
-.btn.danger:hover { border-color: var(--critical); color: var(--critical); }
+.acc-main .hint { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .c-wide { grid-column: span 3; }
-#acc-cli a { color: var(--accent); }
 
 /* ---------- account types ---------- */
 .state.desktop i { background: var(--series-1); }
-.acc-add-box { display: grid; gap: 8px; background: var(--surface-2); border-radius: 8px; padding: 10px; }
-.acc-type { justify-self: start; }
-.acc-actions select { max-width: 100%; font-size: 12px; padding: 3px 6px; }
-.acc-help { grid-column: 2; font-size: 12px; color: var(--text-secondary); }
-.acc-help.warn { color: var(--warning); border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent); border-radius: 6px; padding: 8px; display: grid; gap: 6px; }
 .note-box { margin: 4px 0 6px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); color: var(--text-secondary); font-size: 13px; }

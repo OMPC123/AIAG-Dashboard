@@ -2,14 +2,14 @@
 
 [English](README.md)
 
-給使用 AI coding agent 的人用的桌面監控面板。它把 **Claude**（帳號數量不限）和 **Antigravity** 放在同一個畫面上，顯示每個 agent 是否在工作、方案用量、token 用量和最近的 session。
+給使用 AI coding agent 的人用的桌面監控面板。它把 **Claude** 和 **Antigravity**（包含你所有電腦）放在同一個畫面上，顯示每個 agent 是否在工作、方案用量、token 用量和最近的 session。
 
 所有資料都是讀取這些 App 原本就寫在你電腦上的檔案。不需要 API 金鑰，也不用登入。除非你自己開啟「多台電腦分享」，否則資料不會傳到任何地方。
 
 - **Claude**：每個帳號的 5 小時／7 天方案用量（含歷史）、session 即時狀態（工作中／閒置）、每日與每小時的輸入／輸出／快取 tokens，以及最近的 session（含專案與模型）。
 - **Antigravity**：App 狀態、對話與 agent 步驟數，以及（選用）各模型的剩餘配額。
 - **簡化模式**：每個帳號一列，適合縮成小視窗並置頂。**完整模式**：圖表和 session 清單。
-- **多台電腦**：每台都執行，就能在同一個視窗看到所有電腦。
+- **多台電腦**：每台都執行，就能在同一個視窗看到所有電腦；IP 變動時會自動重新連上。
 - 支援 Windows、macOS、Linux。介面有英文和繁體中文，預設跟隨系統語言。
 
 ## 安裝
@@ -50,29 +50,11 @@ npm start
 
 ## 帳號
 
-「設定 → 帳號」列出這台電腦上的所有帳號。每個帳號都可以改名、在 Dashboard 上隱藏，也可以新增帳號。
+「設定 → 帳號」會列出在這台電腦上偵測到的帳號，包括 Claude 桌面版和 Claude Code 用過的 Claude 帳號，以及 Antigravity 目前登入的帳號。每個帳號都可以設定顯示名稱，或在 Dashboard 上隱藏。其他電腦上的帳號，請在那台電腦上管理。
 
-**Claude 帳號分兩種**（新增時擇一）：
+Dashboard 本身不會登入任何帳號。一台電腦同一時間只會使用一個 Claude 帳號，所以想同時查看第二個帳號，請在使用該帳號的電腦上執行 Dashboard，再把那台電腦加進來（見「多台電腦」）。
 
-- **Claude Code 帳號**：Pro、Max，或含 Claude Code 的 Team／Enterprise 席次。會顯示 session、token 和工作狀態；如果 Claude 桌面版也登入了這個帳號，還會顯示方案用量 %。
-- **網頁／桌面版帳號**：免費方案，或任何沒有 Claude Code 的帳號。不需要在 Dashboard 登入：先在 Claude 桌面版登入這個帳號，新增時從清單選擇它即可。免費方案官方不提供用量 %，所以卡片只會顯示它最後一次在桌面版使用的時間。
-
-如果 Claude Code 登入沒有完成（例如帳號其實沒有 Claude Code 使用權），該帳號會顯示說明，並提供「改成網頁／桌面版帳號」按鈕。
-
-**新增 Claude Code 帳號**：輸入名稱（例如「工作」），按「新增並登入」。Dashboard 會為這個帳號建立獨立的 Claude Code 設定資料夾（`~/.claude-accounts/<名稱>`），並在終端機視窗開啟官方的 Claude Code 登入（`claude auth login`），你在瀏覽器中完成登入即可。Dashboard 不會看到你的密碼或 token；登入資料由 Claude Code 存在該資料夾裡（macOS 則存在鑰匙圈）。
-
-每個新增的帳號都有這些按鈕：
-
-- **開啟 Claude Code**：用這個帳號啟動 Claude Code。之後它的 session、token 和工作狀態就會出現在 Dashboard 上。
-- **複製指令**：複製一行指令，在任何終端機貼上就能用這個帳號執行 Claude Code。
-- **登出**、**資料夾**、**移除**：「移除」只會讓 Dashboard 忘記這個帳號，資料夾和裡面的登入資料仍保留在電腦上。
-- **加入現有資料夾…**：把你原本就用 `CLAUDE_CONFIG_DIR` 使用的資料夾加進來。
-
-登入需要 Claude Code。Dashboard 會依序到 PATH、常見的安裝位置，以及 Claude 桌面版內部尋找它。如果都找不到，「設定」裡會提供安裝說明的連結。
-
-方案用量 %（5 小時／7 天）來自 Claude 桌面版，所以只有在桌面版登入過的帳號才看得到。只透過 Claude Code 使用的帳號，會顯示 session、token 和工作狀態。
-
-Antigravity 是在 Antigravity App 裡用 Google 帳號登入，Dashboard 會列出該 App 目前使用的帳號。這個帳號也可以改名或隱藏。
+沒有用量數據的帳號會改用精簡卡片，並顯示它最後一次在 Claude 桌面版使用的時間。例如免費方案帳號：官方不提供它的用量 %，它也沒有 Claude Code 活動。
 
 ## 資料來源
 
@@ -90,7 +72,7 @@ Antigravity 是在 Antigravity App 裡用 Google 帳號登入，Dashboard 會列
 
 - 方案用量 % 是由 **Claude 桌面版**在你登入該帳號時記錄的。只用 Claude Code CLI 的帳號會顯示 session 和 token，但沒有方案用量 %。
 - Token 數只統計這台電腦上的 Claude Code。在瀏覽器裡用 claude.ai 的對話不會存在本機，所以不會計入。
-- 要追蹤另一個 Claude 帳號，請到「設定 → 帳號」新增（見上方說明）。
+- 要查看另一台電腦上使用的 Claude 帳號，請把那台電腦加進來（見「多台電腦」）。
 - Antigravity 本機不保存 token 數，所以用對話數和 agent 步驟數表示活動量。
 
 ## 多台電腦
@@ -101,6 +83,8 @@ Antigravity 是在 Antigravity App 裡用 Google 帳號登入，Dashboard 會列
 2. 在**要看資料**的電腦：把連線碼貼到「要讀取的其他電腦」→ 新增 → 儲存。
 
 兩台電腦需要在同一個網路，或透過 VPN（例如 Tailscale）互通。分享是唯讀的，以連線碼裡的 token 保護，傳送的內容只有統計數字、session 標題和專案資料夾名稱，不包含對話內容。按「重新產生」後，舊的連線碼就會失效。
+
+**IP 變動**（例如筆電從路由器拿到新的 IP）會自動處理。當另一台電腦在所有已知位址都沒有回應時，Dashboard 會在背景掃描區網中的分享連接埠。只有接受連線碼裡的 token、而且電腦 ID 相同的那一台才會被採用。找到後會記住新位址，下次更新和重新開啟都會直接使用。如果那台電腦一直不在（睡眠或關機），重新尋找的間隔會從 1 分鐘逐步拉長到 10 分鐘。連線碼也包含電腦名稱（`<名稱>.local`），在大多數家用和辦公室網路中，IP 改變後仍能用這個名稱連線。
 
 ### 連不上時
 

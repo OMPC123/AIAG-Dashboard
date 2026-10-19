@@ -1,7 +1,7 @@
 {
   "name": "aiag-dashboard",
   "productName": "AIAG Dashboard",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": "OMPC123",
   "description": "Desktop dashboard for Claude (multiple accounts) and Antigravity: plan usage, session status and token usage, read from local files.",
   "main": "src/main.js",
