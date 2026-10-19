@@ -251,6 +251,10 @@ function collectClaude(settings = {}) {
 
     const files = walk(path.join(dir, 'projects'), (n) => n.endsWith('.jsonl'));
     for (const file of files) {
+      // Transcripts untouched since before the chart window can't change any number shown; skip them.
+      let mtime = 0;
+      try { mtime = fs.statSync(file).mtimeMs; } catch { continue; }
+      if (mtime < sinceMs) continue;
       const e = parseJsonlFile(file);
       if (!e || !e.sessionId) continue;
       const acctUuid = cliToAccount.get(e.sessionId) || dirAccount;

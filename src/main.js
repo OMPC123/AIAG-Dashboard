@@ -3,9 +3,8 @@ const os = require('os');
 const path = require('path');
 const zlib = require('zlib');
 const { applyShare, fetchRemote, newToken } = require('./remote');
+const { Worker } = require('worker_threads');
 const { Settings } = require('./settings');
-const { collectClaude } = require('./collectors/claude');
-const { collectAntigravity } = require('./collectors/antigravity');
 
 let win = null;
 let tray = null;
@@ -75,23 +74,43 @@ const ICONS = {};
 const icon = (state) => (ICONS[state] ||= dotIcon({ working: '#0ca30c', idle: '#3987e5', off: '#8a8984' }[state]));
 
 // ---------- data ----------
+let worker = null;
+let workerSeq = 0;
+const pending = new Map();
+
+function startWorker() {
+  worker = new Worker(path.join(__dirname, 'collectors', 'worker.js'));
+  worker.on('message', (msg) => {
+    const p = pending.get(msg.id);
+    if (p) {
+      pending.delete(msg.id);
+      p(msg);
+    }
+  });
+  worker.on('error', (e) => {
+    for (const p of pending.values()) p({ claude: [], antigravity: [], errors: [`收集程序錯誤：${e.message}`], timings: {} });
+    pending.clear();
+    worker = null; // restarted on the next refresh
+  });
+}
+
+/** Local data from the collector worker thread; the window stays responsive while it parses. */
+function collectLocal(s) {
+  if (!worker) startWorker();
+  return new Promise((resolve) => {
+    const id = ++workerSeq;
+    pending.set(id, resolve);
+    worker.postMessage({ id, settings: { claude: s.claude, antigravity: s.antigravity } });
+  });
+}
+
 async function collect() {
   if (collecting) return lastSnapshot;
   collecting = true;
   const s = settings.value;
-  const errors = [];
-  let claude = [];
-  let antigravity = [];
-  try {
-    claude = collectClaude(s.claude);
-  } catch (e) {
-    errors.push(`Claude: ${e.message}`);
-  }
-  try {
-    antigravity = await collectAntigravity(s.antigravity);
-  } catch (e) {
-    errors.push(`Antigravity: ${e.message}`);
-  }
+  const local = await collectLocal(s);
+  const errors = [...local.errors];
+  let { claude, antigravity } = local;
   const at = Date.now();
   const machine = machineName();
   localSnapshot = { at, machine, claude: claude.map((a) => tag(a, machine, at)), antigravity: antigravity.map((g) => tag(g, machine, at)) };
@@ -118,7 +137,7 @@ async function collect() {
   for (const g of antigravity) if (labels[g.id]) g.label = labels[g.id];
 
   collecting = false;
-  lastSnapshot = { at, machine, machines, share: shareStatus, claude, antigravity, errors };
+  lastSnapshot = { at, machine, machines, share: shareStatus, claude, antigravity, errors, timings: local.timings };
   if (win && !win.isDestroyed()) win.webContents.send('snapshot', lastSnapshot);
   updateTray(lastSnapshot);
   return lastSnapshot;

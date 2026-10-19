@@ -409,7 +409,10 @@ function updatedLine() {
   if (!snapshot) return;
   const ms = (snapshot.machines || []).map((m) => `${m.ok ? '●' : '○'} ${m.name}${m.local ? '（本機）' : ''}`).join('  ');
   const share = snapshot.share && snapshot.share.running ? ` · 分享中 :${snapshot.share.port}` : '';
-  $('#updated').textContent = `更新於 ${rel(snapshot.at)} · 每 ${settings ? settings.refreshSeconds : 10} 秒${share}　${ms}`;
+  const t = snapshot.timings || {};
+  const cost = t.claude != null ? ` · 讀取 ${((t.claude + t.antigravity) / 1000).toFixed(1)} 秒` : '';
+  $('#updated').textContent = `更新於 ${rel(snapshot.at)} · 每 ${settings ? settings.refreshSeconds : 10} 秒${share}${cost}　${ms}`;
+  $('#updated').title = t.claude != null ? `Claude ${t.claude} ms · Antigravity ${t.antigravity} ms` : '';
 }
 setInterval(updatedLine, 5000);
 
