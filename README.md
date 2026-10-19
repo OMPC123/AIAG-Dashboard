@@ -38,6 +38,23 @@ npm start
 
 每台電腦都只讀得到自己的本機紀錄，所以兩台都要執行這個 Dashboard。支援 Windows 和 macOS。
 
+### 在 Mac 上從 GitHub 下載（私人儲存庫）
+
+在「終端機」執行（需要 Homebrew；沒有的話先到 https://brew.sh 安裝）：
+
+```bash
+brew install node gh
+gh auth login            # 選 GitHub.com → HTTPS → Login with a web browser
+gh repo clone <你的帳號>/<儲存庫名稱> ~/AIAG_Dashboard
+cd ~/AIAG_Dashboard && npm install && npm start
+```
+
+之後可以在 Finder 雙擊 `~/AIAG_Dashboard/AIAG Dashboard.command` 啟動。要更新到最新版時，執行：
+
+```bash
+cd ~/AIAG_Dashboard && git pull && npm install
+```
+
 1. 把整個資料夾複製到第二台電腦，**不要**複製 `node_modules`（裡面是 Windows 版的 Electron，第二台會自動重新安裝）。第二台需要先安裝 Node.js。
    - Windows：雙擊 `AIAG Dashboard.bat`。
    - macOS（例如 MacBook Air）：先在「終端機」進入資料夾，執行一次 `chmod +x "AIAG Dashboard.command"`，之後就可以在 Finder 雙擊 `AIAG Dashboard.command` 啟動。也可以直接執行 `npm install && npm start`。
