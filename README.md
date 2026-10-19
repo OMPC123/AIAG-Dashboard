@@ -18,7 +18,7 @@ Download the latest build from **Releases**:
 
 | System | File |
 |---|---|
-| Windows | `AIAG-Dashboard-x.y.z-win-x64-nsis.exe` (installer) or `…-win-portable.exe` (no install) |
+| Windows | `AIAG-Dashboard-x.y.z-win-x64-setup.exe` (installer) or `…-win-portable.exe` (no install) |
 | macOS, Apple Silicon (M1–M4) | `AIAG-Dashboard-x.y.z-mac-arm64.dmg` |
 | macOS, Intel | `AIAG-Dashboard-x.y.z-mac-x64.dmg` |
 | Linux | `AIAG-Dashboard-x.y.z-linux-x86_64.AppImage` |

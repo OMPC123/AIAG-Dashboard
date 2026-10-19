@@ -2,6 +2,7 @@
   "name": "aiag-dashboard",
   "productName": "AIAG Dashboard",
   "version": "0.2.0",
+  "author": "OMPC123",
   "description": "Desktop dashboard for Claude (multiple accounts) and Antigravity: plan usage, session status and token usage, read from local files.",
   "main": "src/main.js",
   "private": true,
@@ -28,17 +29,18 @@
     "directories": { "output": "dist", "buildResources": "build" },
     "files": ["src/**/*", "package.json"],
     "asarUnpack": ["src/collectors/**"],
+    "afterPack": "build/afterPack.js",
     "win": {
       "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "portable", "arch": ["x64"] }],
-      "artifactName": "AIAG-Dashboard-${version}-win-${arch}-${target}.${ext}"
+      "artifactName": "AIAG-Dashboard-${version}-win-${arch}.${ext}"
     },
-    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true },
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "artifactName": "AIAG-Dashboard-${version}-win-x64-setup.${ext}" },
     "portable": { "artifactName": "AIAG-Dashboard-${version}-win-portable.${ext}" },
     "mac": {
       "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }],
       "category": "public.app-category.developer-tools",
       "artifactName": "AIAG-Dashboard-${version}-mac-${arch}.${ext}",
-      "identity": "-"
+      "identity": null
     },
     "linux": {
       "target": ["AppImage"],

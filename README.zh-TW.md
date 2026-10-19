@@ -18,7 +18,7 @@
 
 | 系統 | 檔案 |
 |---|---|
-| Windows | `AIAG-Dashboard-x.y.z-win-x64-nsis.exe`（安裝版），或 `…-win-portable.exe`（免安裝） |
+| Windows | `AIAG-Dashboard-x.y.z-win-x64-setup.exe`（安裝版），或 `…-win-portable.exe`（免安裝） |
 | macOS（Apple Silicon，M1–M4） | `AIAG-Dashboard-x.y.z-mac-arm64.dmg` |
 | macOS（Intel） | `AIAG-Dashboard-x.y.z-mac-x64.dmg` |
 | Linux | `AIAG-Dashboard-x.y.z-linux-x86_64.AppImage` |
