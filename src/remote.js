@@ -116,17 +116,27 @@ function makeCode({ id, name, port, token, addresses }) {
  * Accepts a connection code, or a manual "name | http://host:port | token" line.
  * Returns { id, name, urls, token } or null.
  */
+function decodeCode(code) {
+  try {
+    const o = JSON.parse(Buffer.from(code.slice(CODE_PREFIX.length), 'base64url').toString('utf8'));
+    if (!o.t || !o.p || !Array.isArray(o.h) || !o.h.length) return null;
+    return { id: o.i ? String(o.i) : null, name: String(o.n || o.h[0]), urls: o.h.map((h) => `http://${h}:${o.p}`), token: String(o.t) };
+  } catch {
+    return null;
+  }
+}
+
 function parseCode(text) {
   const s = String(text || '').trim();
   if (!s) return null;
-  if (s.startsWith(CODE_PREFIX)) {
-    try {
-      const o = JSON.parse(Buffer.from(s.slice(CODE_PREFIX.length), 'base64url').toString('utf8'));
-      if (!o.t || !o.p || !Array.isArray(o.h) || !o.h.length) return null;
-      return { id: o.i ? String(o.i) : null, name: String(o.n || o.h[0]), urls: o.h.map((h) => `http://${h}:${o.p}`), token: String(o.t) };
-    } catch {
-      return null;
-    }
+  // A connection code anywhere in the line wins, e.g. "Office | http://1.2.3.4:47821 | aiag1:…"
+  // (pasting the whole code into the token field). A name typed before it is kept.
+  if (s.includes(CODE_PREFIX)) {
+    const m = s.match(/aiag1:[A-Za-z0-9_-]+/);
+    const r = m && decodeCode(m[0]);
+    if (!r) return null;
+    const typedName = s.slice(0, m.index).split('|')[0].trim();
+    return typedName && !typedName.startsWith(CODE_PREFIX) ? { ...r, name: typedName } : r;
   }
   const parts = s.split('|').map((x) => x.trim());
   if (parts.length === 3 && parts[1] && parts[2]) return { id: null, name: parts[0], urls: [parts[1]], token: parts[2] };

@@ -26,7 +26,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.deepStrictEqual(parseCode('Mac | http://127.0.0.1:47899 | secret-token'), { id: null, name: 'Mac', urls: ['http://127.0.0.1:47899'], token: 'secret-token' });
   assert.strictEqual(parseCode('garbage'), null);
   assert.strictEqual(parseCode('aiag1:not-base64-json'), null);
-  console.log('manual "name | url | token" accepted, garbage rejected');
+  assert.strictEqual(parseCode('X | http://h:1 | aiag1:@@@'), null);
+  // the whole code pasted into the token field of a manual line: the code is used, the typed name kept
+  const mixed = parseCode(`My PC | http://192.168.1.48:47821 | ${code}`);
+  assert.deepStrictEqual([mixed.name, mixed.token, mixed.id], ['My PC', 'secret-token', 'pc2-id']);
+  console.log('manual "name | url | token" accepted, code inside a manual line decoded, garbage rejected');
 
   const bad = await fetchRemote({ ...remote, token: 'wrong' }, { scan: false });
   assert(!bad.ok && bad.error.key === 'err_badToken');
