@@ -26,7 +26,13 @@
 安裝檔沒有程式碼簽章，所以第一次開啟時會出現警告：
 
 - **Windows**：SmartScreen 顯示「Windows 已保護您的電腦」→ 按「其他資訊」→「仍要執行」。
-- **macOS**：第一次請在 App 上按右鍵 →「打開」→「打開」。如果出現「已損毀」，在「終端機」執行 `xattr -cr "/Applications/AIAG Dashboard.app"` 後再打開。
+- **macOS**：請先把 App 拖進「應用程式」，不要直接從掛載的 DMG 執行。macOS 會提示無法驗證開發者，這時在「終端機」執行一次下面的指令，之後就能直接雙擊開啟：
+
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/AIAG Dashboard.app"
+  ```
+
+  每次安裝新版後要再執行一次。如果不想用終端機，也可以先嘗試開啟 App，再到「系統設定 → 隱私權與安全性」按「強制打開」；但這個按鈕只會在嘗試開啟後約一小時內出現。
 
 ### 從原始碼執行
 

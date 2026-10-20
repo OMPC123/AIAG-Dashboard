@@ -26,7 +26,13 @@ Download the latest build from **Releases**:
 The builds are not code-signed, so the first launch shows a warning:
 
 - **Windows**: SmartScreen says “Windows protected your PC” → *More info* → *Run anyway*.
-- **macOS**: open the app once with right-click → *Open* → *Open*. If macOS says the app “is damaged”, run `xattr -cr "/Applications/AIAG Dashboard.app"` in Terminal, then open it again.
+- **macOS**: drag the app into *Applications* first (don't run it from the mounted DMG). macOS then says it can't verify the developer. Run this once in Terminal, and the app opens with a normal double-click from then on:
+
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/AIAG Dashboard.app"
+  ```
+
+  Run it again after installing a new version. (Without Terminal: try to open the app, then go to *System Settings → Privacy & Security* and click *Open Anyway*. That button only shows for about an hour after the blocked attempt.)
 
 ### Run from source
 
