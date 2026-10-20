@@ -3,6 +3,7 @@
   "productName": "AIAG Dashboard",
   "version": "0.5.0",
   "author": "OMPC123",
+  "license": "MIT",
   "description": "Desktop dashboard for Claude (multiple accounts) and Antigravity: plan usage, session status and token usage, read from local files.",
   "main": "src/main.js",
   "private": true,

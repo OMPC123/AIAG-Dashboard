@@ -134,3 +134,9 @@ npm run dist:win    # build installers into dist/ (also dist:mac, dist:linux)
 ```
 
 Releases: push a tag such as `v0.2.0`. GitHub Actions builds Windows, macOS and Linux and attaches them to a **draft** release; publish it from the Releases page.
+
+## License
+
+[MIT](LICENSE) © 2026 OMPC123
+
+AIAG Dashboard is an independent project. It is not affiliated with or endorsed by Anthropic or Google. "Claude" and "Antigravity" are trademarks of their respective owners.

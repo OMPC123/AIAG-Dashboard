@@ -138,3 +138,9 @@ npm run dist:win    # 在 dist/ 產生安裝檔（另有 dist:mac、dist:linux�
 ```
 
 發佈新版：推送像 `v0.2.0` 這樣的 tag，GitHub Actions 會自動建置 Windows、macOS、Linux 版本，並附加到一個**草稿**版本。到 Releases 頁面確認後再按「Publish」。
+
+## 授權
+
+[MIT](LICENSE) © 2026 OMPC123
+
+AIAG Dashboard 是獨立專案，與 Anthropic 或 Google 沒有關聯，也未獲其背書。「Claude」與「Antigravity」為各自所有者的商標。
