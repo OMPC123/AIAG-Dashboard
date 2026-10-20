@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell, screen, clipboard } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, clipboard } = require('electron');
 const os = require('os');
 const path = require('path');
 const zlib = require('zlib');
@@ -25,6 +25,8 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) app.quit();
 
 const machineName = () => (settings.value.machineName || '').trim() || os.hostname().replace(/\.local$/, '');
+/** Lists from another computer: plain objects only, bounded (it is someone else's data). */
+const objs = (x, max = 50) => (Array.isArray(x) ? x.filter((o) => o && typeof o === 'object' && !Array.isArray(o)).slice(0, max) : []);
 const tag = (item, machine, at) => ({ ...item, machine, collectedAt: at, key: `${machine}|${item.id}` });
 
 function systemLocale() {
@@ -47,7 +49,7 @@ function shareCode() {
 function applyShareSettings() {
   applyShare(
     settings.value.share,
-    () => localSnapshot,
+    () => sharedSnapshot(localSnapshot),
     (st) => {
       shareStatus = st;
       if (lastSnapshot) {
@@ -57,6 +59,29 @@ function applyShareSettings() {
     },
     () => ({ id: settings.value.machineId, name: machineName() })
   );
+}
+
+/**
+ * What another computer receives: what its dashboard displays, nothing more (no full folder paths, no
+ * internal file locations, no settings).
+ */
+function sharedSnapshot(snap) {
+  if (!snap) return null;
+  const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o && o[k] !== undefined).map((k) => [k, o[k]]));
+  return {
+    at: snap.at,
+    machine: snap.machine,
+    machineId: settings.value.machineId,
+    claude: snap.claude.map((a) => ({
+      ...pick(a, ['id', 'kind', 'label', 'ordinal', 'orgUuid', 'plan', 'desktopLastSeen', 'inDesktop', 'today', 'last5h', 'daily', 'hourly', 'counts', 'lastActivity']),
+      profile: a.profile ? pick(a.profile, ['email', 'displayName', 'orgName', 'billingType']) : null,
+      sessions: (a.sessions || []).map((x) => pick(x, ['sessionId', 'title', 'project', 'model', 'state', 'lastActivity', 'startedAt', 'subagents', 'tokens', 'today'])),
+    })),
+    antigravity: snap.antigravity.map((g) => ({
+      ...pick(g, ['id', 'kind', 'label', 'appRunning', 'languageServerRunning', 'quota', 'quotaEnabled', 'counts', 'daily', 'lastActivity']),
+      conversations: (g.conversations || []).map((c) => pick(c, ['id', 'title', 'project', 'agent', 'steps', 'state', 'lastActivity'])),
+    })),
+  };
 }
 
 /** A remote machine turned up at a new address (its IP changed): remember it, so restarts try it first. */
@@ -133,25 +158,45 @@ function startWorker() {
       p(msg);
     }
   });
-  worker.on('error', (e) => {
-    for (const p of pending.values()) p({ claude: [], antigravity: [], errors: [{ key: 'err_collector', vars: { e: e.message } }], timings: {}, sources: null });
+  const fail = (message) => {
+    for (const p of pending.values()) p({ claude: [], antigravity: [], errors: [{ key: 'err_collector', vars: { e: message } }], timings: {}, sources: null });
     pending.clear();
     worker = null; // restarted on the next refresh
-  });
+  };
+  const w = worker;
+  w.on('error', (e) => worker === w && fail(e.message));
+  w.on('exit', (code) => worker === w && fail(`exited (${code})`));
 }
+
+const COLLECT_TIMEOUT_MS = 120000;
 
 /** Local data from the collector worker thread; the window stays responsive while it parses. */
 function collectLocal(s) {
   if (!worker) startWorker();
   return new Promise((resolve) => {
     const id = ++workerSeq;
-    pending.set(id, resolve);
+    const timer = setTimeout(() => {
+      // a stuck collector: replace the worker so the next refresh starts clean
+      pending.delete(id);
+      const w = worker;
+      worker = null;
+      if (w) w.terminate();
+      resolve({ claude: [], antigravity: [], errors: [{ key: 'err_collector', vars: { e: 'timeout' } }], timings: {}, sources: null });
+    }, COLLECT_TIMEOUT_MS);
+    pending.set(id, (msg) => {
+      clearTimeout(timer);
+      resolve(msg);
+    });
     worker.postMessage({ id, settings: { claude: s.claude, antigravity: s.antigravity } });
   });
 }
 
+let collectAgain = false;
 async function collect() {
-  if (collecting) return lastSnapshot;
+  if (collecting) {
+    collectAgain = true;
+    return lastSnapshot;
+  }
   collecting = true;
   try {
     const s = settings.value;
@@ -167,18 +212,25 @@ async function collect() {
     };
 
     // Merge in other machines (only their own local data, so two PCs pointing at each other don't loop).
-    const remotes = await Promise.all((s.remotes || []).map((r) => fetchRemote(r, { onFound: rememberRemoteAddress })));
+    const scan = s.lanDiscovery !== false;
+    const remotes = await Promise.all((s.remotes || []).map((r) => fetchRemote(r, { onFound: rememberRemoteAddress, scan })));
+    const seenKeys = new Set([...localSnapshot.claude, ...localSnapshot.antigravity].map((x) => x.key));
+    const seenMachines = new Set([s.machineId]);
     const machines = [{ name: machine, local: true, ok: true, at }];
     let claude = s.claude.enabled ? [...localSnapshot.claude] : [];
     let antigravity = s.antigravity.enabled ? [...localSnapshot.antigravity] : [];
     for (const r of remotes) {
-      const name = r.remote.name || (r.snap && r.snap.machine) || (r.remote.urls || [])[0];
+      const name = String(r.remote.name || (r.snap && r.snap.machine) || (r.remote.urls || [])[0] || '').slice(0, 64);
       machines.push({ name, ok: r.ok, at: r.snap && r.snap.at, address: r.ok && r.url ? baseOf(r.url) : null });
       if (!r.ok) errors.push({ key: 'err_remote', vars: { name }, cause: r.error, stale: !!r.snap });
       if (!r.snap) continue;
+      // the same computer added twice, or this computer's own code
+      if (r.snap.machineId && seenMachines.has(r.snap.machineId)) continue;
+      if (r.snap.machineId) seenMachines.add(r.snap.machineId);
       const stale = !r.ok;
-      if (s.claude.enabled) for (const a of r.snap.claude || []) claude.push({ ...tag(a, name, r.snap.at), remote: true, stale });
-      if (s.antigravity.enabled) for (const g of r.snap.antigravity || []) antigravity.push({ ...tag(g, name, r.snap.at), remote: true, stale });
+      const fresh = (x) => !seenKeys.has(x.key) && seenKeys.add(x.key);
+      if (s.claude.enabled) for (const a of objs(r.snap.claude)) { const x = { ...tag(a, name, r.snap.at), remote: true, stale }; if (fresh(x)) claude.push(x); }
+      if (s.antigravity.enabled) for (const g of objs(r.snap.antigravity)) { const x = { ...tag(g, name, r.snap.at), remote: true, stale }; if (fresh(x)) antigravity.push(x); }
     }
     // Number unnamed accounts across all machines, then apply this machine's display names.
     let n = 0;
@@ -217,6 +269,10 @@ async function collect() {
     return lastSnapshot;
   } finally {
     collecting = false;
+    if (collectAgain) {
+      collectAgain = false;
+      setTimeout(collect, 0);
+    }
   }
 }
 
@@ -247,7 +303,7 @@ function buildTrayMenu() {
 
 function schedule() {
   clearInterval(timer);
-  timer = setInterval(collect, Math.max(3, settings.value.refreshSeconds) * 1000);
+  timer = setInterval(collect, Math.min(600, Math.max(3, Number(settings.value.refreshSeconds) || 10)) * 1000);
 }
 
 // ---------- window ----------
@@ -300,6 +356,9 @@ function createWindow() {
   if ((savedBounds() || {}).maximized) win.maximize();
   win.once('ready-to-show', () => win.show());
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  // Never navigate away from the app page or open new windows (e.g. a link inside data from another computer).
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('did-finish-load', () => lastSnapshot && send(lastSnapshot));
   for (const ev of ['resize', 'move', 'maximize', 'unmaximize']) win.on(ev, rememberBounds);
   let lastFocusRefresh = 0;
@@ -375,8 +434,6 @@ app.whenReady().then(() => {
   ipcMain.handle('share:newToken', () => newToken());
   ipcMain.handle('remote:parse', (_e, text) => parseCode(text));
   ipcMain.handle('clipboard:write', (_e, text) => clipboard.writeText(String(text || '')));
-  ipcMain.handle('open:path', (_e, p) => typeof p === 'string' && shell.openPath(p));
-  ipcMain.handle('open:url', (_e, u) => typeof u === 'string' && /^https:\/\//.test(u) && shell.openExternal(u));
 
   tray = new Tray(icon('idle'));
   buildTrayMenu();

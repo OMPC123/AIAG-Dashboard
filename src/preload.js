@@ -9,6 +9,4 @@ contextBridge.exposeInMainWorld('dashboard', {
   newShareToken: () => ipcRenderer.invoke('share:newToken'),
   parseRemote: (text) => ipcRenderer.invoke('remote:parse', text),
   copy: (text) => ipcRenderer.invoke('clipboard:write', text),
-  openPath: (p) => ipcRenderer.invoke('open:path', p),
-  openUrl: (u) => ipcRenderer.invoke('open:url', u),
 });

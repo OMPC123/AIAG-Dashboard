@@ -15,8 +15,10 @@ const DEFAULTS = {
   machineId: '',
   // Serve this machine's data to other PCs on the LAN (read-only, token protected).
   share: { enabled: false, port: 47821, token: '' },
-  // Other PCs running this dashboard with sharing on: [{ name, urls: [..], token }]
+  // Other PCs running this dashboard with sharing on: [{ name, urls: [..], token, id }]
   remotes: [],
+  // When another PC's IP changes, look for it on the local network (challenge-response; the token isn't sent).
+  lanDiscovery: true,
   claude: {
     enabled: true,
     // account id -> display name
@@ -55,9 +57,12 @@ function migrate(v) {
   delete v.claude.extraConfigDirs;
   delete v.claude.cliPath;
   v.claude.hidden = (v.claude.hidden || []).filter((h) => !String(h).startsWith('account:'));
+  const tokens = new Set();
   v.remotes = (v.remotes || [])
-    .map((r) => ({ name: r.name || '', urls: r.urls || (r.url ? [r.url] : []), token: r.token || '', id: r.id || null }))
-    .filter((r) => r.urls.length);
+    .map((r) => ({ ...r, name: r.name || '', urls: r.urls || (r.url ? [r.url] : []), token: r.token || '', id: r.id || null }))
+    .filter((r) => r.urls.length && r.token && !tokens.has(r.token) && tokens.add(r.token)) // one entry per computer
+    .filter((r) => !(r.id && r.id === v.machineId)); // not this computer itself
+  v.refreshSeconds = Math.min(600, Math.max(3, Number(v.refreshSeconds) || 10));
   return v;
 }
 

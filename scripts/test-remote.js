@@ -28,7 +28,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.strictEqual(parseCode('aiag1:not-base64-json'), null);
   assert.strictEqual(parseCode('X | http://h:1 | aiag1:@@@'), null);
   // the whole code pasted into the token field of a manual line: the code is used, the typed name kept
-  const mixed = parseCode(`My PC | http://192.168.1.48:47821 | ${code}`);
+  const mixed = parseCode(`My PC | http://192.0.2.10:47821 | ${code}`);
   assert.deepStrictEqual([mixed.name, mixed.token, mixed.id], ['My PC', 'secret-token', 'pc2-id']);
   console.log('manual "name | url | token" accepted, code inside a manual line decoded, garbage rejected');
 
@@ -55,9 +55,52 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   assert(r2.ok && r2.snap.machine === 'PC-2');
   console.log('IP change: rediscovered at', found, 'and the next refresh connects');
 
-  // ---- offline: stale data is kept ----
-  applyShare({ ...share, enabled: false }, () => snap, () => {});
+  // ---- the token is never sent to a machine that can't prove it knows it ----
+  const http = require('http');
+  const spy = (mode) => {
+    const seen = [];
+    const srv = http.createServer((req, res) => {
+      seen.push(req.headers.authorization || null);
+      if (req.url.startsWith('/api/ping')) {
+        if (mode === 'impostor') res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ app: 'aiag', v: 2, id: 'pc2-id', proof: 'forged' }));
+        else res.writeHead(404).end(); // pre-0.4 version: no /api/ping
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ machine: 'legacy', claude: [], antigravity: [] }));
+    });
+    return new Promise((r) => srv.listen(0, '127.0.0.1', () => r({ srv, seen, base: `http://127.0.0.1:${srv.address().port}` })));
+  };
+  const imp = await spy('impostor');
+  _resetForTests();
+  const vsImpostor = { ...remote, urls: [imp.base] };
+  assert.strictEqual(await findRemote(vsImpostor, { hosts: ['127.0.0.1'] }), null);
+  const viaConfig = await fetchRemote(vsImpostor, { scan: false });
+  assert(!viaConfig.ok);
+  assert(imp.seen.every((h) => h === null), 'token leaked to impostor: ' + JSON.stringify(imp.seen));
+  console.log(`impostor at a saved address / during a scan never receives the token (${imp.seen.length} requests, 0 with a token)`);
+
+  const old = await spy('legacy');
+  _resetForTests();
+  const legacyRemote = { id: null, name: 'old', urls: [old.base], token: 'secret-token' };
+  const viaLegacy = await fetchRemote(legacyRemote, { scan: false });
+  assert(viaLegacy.ok && viaLegacy.snap.machine === 'legacy', 'older version at an address from the code still works');
+  assert.strictEqual(await findRemote(legacyRemote, { hosts: ['127.0.0.1'] }), null, 'older versions are not rediscovered by scanning');
+  console.log('older version at the address from its code still works; scans never send it the token');
+
+  // once a machine has proven itself, a "legacy" answer at its address is refused (someone else took the IP)
+  _resetForTests();
+  const proven = await fetchRemote({ ...remote, urls: ['http://127.0.0.1:47899'] }, { scan: false });
+  assert(proven.ok);
+  applyShare({ ...share, enabled: false }, () => snap, () => {}); // the real machine goes away...
   await sleep(200);
+  const before = old.seen.filter(Boolean).length; // ...and an old-version-looking server answers instead
+  const hijack = await fetchRemote({ ...remote, urls: [old.base] }, { scan: false });
+  assert(!hijack.ok && old.seen.filter(Boolean).length === before, 'token must not be sent after the machine proved itself');
+  console.log('after a machine has proven itself, an old-version answer at its address gets no token');
+  imp.srv.close();
+  old.srv.close();
+
+  // ---- offline: stale data is kept ----
   const down = await fetchRemote(remote, { scan: false });
   assert(!down.ok && down.snap && down.snap.machine === 'PC-2');
   console.log('offline -> stale fallback:', down.error.key || down.error.text);

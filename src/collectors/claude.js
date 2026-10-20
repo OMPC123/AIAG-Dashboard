@@ -20,17 +20,30 @@ const DESKTOP_DIR = desktopDir();
 
 // ---------- incremental JSONL token parser ----------
 
-/** file -> { offset, sessionId, cwd, title, model, firstTs, lastTs, seen:Set, hours:Map<hourKey, bucket> } */
+/**
+ * file -> { offset, head, sessionId, cwd, model, firstTs, lastTs, keys:Set, records:[], models }
+ * records: one per API response { k, ts, input, output, cacheRead, cacheWrite }. Totals are computed from
+ * records with a dedupe across files, because a resumed / continued session repeats earlier responses
+ * in its new transcript file.
+ */
 const fileCache = new Map();
 
 const emptyBucket = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, messages: 0 });
 
-function addUsage(bucket, u) {
-  bucket.input += u.input_tokens || 0;
-  bucket.output += u.output_tokens || 0;
-  bucket.cacheRead += u.cache_read_input_tokens || 0;
-  bucket.cacheWrite += u.cache_creation_input_tokens || 0;
+function addRecord(bucket, r) {
+  bucket.input += r.input;
+  bucket.output += r.output;
+  bucket.cacheRead += r.cacheRead;
+  bucket.cacheWrite += r.cacheWrite;
   bucket.messages += 1;
+}
+
+const HEAD_BYTES = 256;
+function readHead(fd, size) {
+  const n = Math.min(HEAD_BYTES, size);
+  const b = Buffer.alloc(n);
+  fs.readSync(fd, b, 0, n, 0);
+  return b.toString('base64');
 }
 
 function parseJsonlFile(file) {
@@ -41,24 +54,32 @@ function parseJsonlFile(file) {
     fileCache.delete(file);
     return null;
   }
-  let entry = fileCache.get(file);
-  if (!entry || stat.size < entry.offset) {
-    entry = { offset: 0, sessionId: null, cwd: null, model: null, firstTs: 0, lastTs: 0, seen: new Set(), hours: new Map(), models: {} };
-    fileCache.set(file, entry);
-  }
-  if (stat.size === entry.offset) return entry;
-
-  const fd = fs.openSync(file, 'r');
+  let fd;
   try {
+    fd = fs.openSync(file, 'r');
+  } catch {
+    return fileCache.get(file) || null;
+  }
+  try {
+    let entry = fileCache.get(file);
+    // Start over when the file is new, shrank, or was rewritten (its first bytes changed).
+    const head = entry && stat.size >= entry.offset && stat.size > 0 ? readHead(fd, stat.size) : null;
+    if (!entry || stat.size < entry.offset || (entry.head && head !== entry.head && entry.offset >= HEAD_BYTES)) {
+      entry = { offset: 0, head: null, sessionId: null, cwd: null, model: null, firstTs: 0, lastTs: 0, keys: new Set(), records: [], models: {} };
+      fileCache.set(file, entry);
+    }
+    if (stat.size === entry.offset) return entry;
+
     const len = stat.size - entry.offset;
     const buf = Buffer.alloc(len);
     fs.readSync(fd, buf, 0, len, entry.offset);
     const lastNl = buf.lastIndexOf(0x0a);
     if (lastNl < 0) return entry; // no complete line yet
     entry.offset += lastNl + 1;
+    if (entry.offset >= HEAD_BYTES || !entry.head) entry.head = readHead(fd, Math.min(entry.offset, stat.size));
     const text = buf.subarray(0, lastNl).toString('utf8');
     for (const line of text.split('\n')) {
-      if (!line || line.indexOf('"usage"') < 0 && line.indexOf('"sessionId"') < 0) continue;
+      if (!line || (line.indexOf('"usage"') < 0 && line.indexOf('"sessionId"') < 0)) continue;
       let rec;
       try {
         rec = JSON.parse(line);
@@ -71,9 +92,9 @@ function parseJsonlFile(file) {
       const usage = msg && msg.usage;
       if (!usage || rec.type !== 'assistant') continue;
       // One API response is written as several lines (one per content block) sharing the same usage.
-      const key = `${msg.id || ''}:${rec.requestId || ''}`;
-      if (key !== ':' && entry.seen.has(key)) continue;
-      entry.seen.add(key);
+      const k = msg.id || rec.requestId ? `${msg.id || ''}:${rec.requestId || ''}` : null;
+      if (k && entry.keys.has(k)) continue;
+      if (k) entry.keys.add(k);
       const ts = Date.parse(rec.timestamp) || stat.mtimeMs;
       if (!entry.firstTs || ts < entry.firstTs) entry.firstTs = ts;
       if (ts > entry.lastTs) entry.lastTs = ts;
@@ -81,14 +102,24 @@ function parseJsonlFile(file) {
         entry.model = msg.model;
         entry.models[msg.model] = (entry.models[msg.model] || 0) + (usage.output_tokens || 0);
       }
-      const hk = hourKey(ts);
-      if (!entry.hours.has(hk)) entry.hours.set(hk, emptyBucket());
-      addUsage(entry.hours.get(hk), usage);
+      entry.records.push({
+        k,
+        ts,
+        input: usage.input_tokens || 0,
+        output: usage.output_tokens || 0,
+        cacheRead: usage.cache_read_input_tokens || 0,
+        cacheWrite: usage.cache_creation_input_tokens || 0,
+      });
     }
+    return entry;
   } finally {
     fs.closeSync(fd);
   }
-  return entry;
+}
+
+/** Drop cached files that are gone or no longer looked at, so a long-running app doesn't grow. */
+function pruneCache(keep) {
+  for (const f of fileCache.keys()) if (!keep.has(f)) fileCache.delete(f);
 }
 
 // ---------- account discovery ----------
@@ -129,7 +160,7 @@ function desktopSessions() {
       for (const f of listDir(dir)) {
         if (!f.isFile() || !/^local_.*\.json$/.test(f.name)) continue;
         const s = readJson(path.join(dir, f.name));
-        if (!s) continue;
+        if (!s || !s.cliSessionId) continue;
         sessions.push({
           accountUuid: acct.name,
           orgUuid: org.name,
@@ -196,23 +227,16 @@ function liveSessions(dir) {
 
 // ---------- aggregation ----------
 
-function sumBuckets(target, hours, fromHour, toHour) {
-  for (const [hk, b] of hours) {
-    if (hk < fromHour || hk > toHour) continue;
-    target.input += b.input;
-    target.output += b.output;
-    target.cacheRead += b.cacheRead;
-    target.cacheWrite += b.cacheWrite;
-    target.messages += b.messages;
-  }
-  return target;
+/** Local midnight `n` days before today (calendar days, so DST and half-hour time zones are right). */
+function localDayStart(daysAgo, now = new Date()) {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysAgo).getTime();
 }
 
 function collectClaude(settings = {}) {
   const now = Date.now();
   const days = 14;
-  const startOfToday = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
-  const sinceMs = startOfToday - (days - 1) * 24 * HOUR;
+  const sinceMs = localDayStart(days - 1);
+  const todayKey = localDateKey(now);
   const labels = settings.labels || {};
 
   const desktop = desktopSessions();
@@ -229,7 +253,9 @@ function collectClaude(settings = {}) {
         profile: null,
         sources: [],
         sessions: new Map(),
-        hours: new Map(),
+        hours: new Map(), // UTC hour -> bucket (24-hour chart)
+        days: new Map(), // local date -> bucket
+        last5h: emptyBucket(),
       });
     }
     const a = accounts.get(accountUuid);
@@ -250,20 +276,23 @@ function collectClaude(settings = {}) {
     const live = new Map(liveSessions(dir).map((s) => [s.sessionId, s]));
 
     const files = walk(path.join(dir, 'projects'), (n) => n.endsWith('.jsonl'));
+    const parsed = [];
     for (const file of files) {
       // Transcripts untouched since before the chart window can't change any number shown; skip them.
       let mtime = 0;
       try { mtime = fs.statSync(file).mtimeMs; } catch { continue; }
       if (mtime < sinceMs) continue;
       const e = parseJsonlFile(file);
-      if (!e || !e.sessionId) continue;
+      if (e && e.sessionId) parsed.push({ file, e });
+    }
+    pruneCache(new Set(parsed.map((x) => x.file)));
+
+    // Each response counts once, for the earliest transcript that contains it.
+    parsed.sort((x, y) => (x.e.firstTs || Infinity) - (y.e.firstTs || Infinity));
+    const counted = new Set();
+    for (const { file, e } of parsed) {
       const acctUuid = cliToAccount.get(e.sessionId) || dirAccount;
       const acct = ensure(acctUuid);
-      for (const [hk, b] of e.hours) {
-        if (!acct.hours.has(hk)) acct.hours.set(hk, emptyBucket());
-        const t = acct.hours.get(hk);
-        t.input += b.input; t.output += b.output; t.cacheRead += b.cacheRead; t.cacheWrite += b.cacheWrite; t.messages += b.messages;
-      }
       const isSubagent = /[\\/]subagents[\\/]/.test(file);
       let s = acct.sessions.get(e.sessionId);
       if (!s) {
@@ -287,8 +316,21 @@ function collectClaude(settings = {}) {
       if (e.firstTs && (!s.firstTs || e.firstTs < s.firstTs)) s.firstTs = e.firstTs;
       if (!isSubagent && e.model) s.model = e.model;
       for (const [m, n] of Object.entries(e.models)) s.models[m] = (s.models[m] || 0) + n;
-      sumBuckets(s.tokens, e.hours, -Infinity, Infinity);
-      sumBuckets(s.today, e.hours, hourKey(startOfToday), Infinity);
+      for (const r of e.records) {
+        if (r.k) {
+          if (counted.has(r.k)) continue;
+          counted.add(r.k);
+        }
+        const hk = hourKey(r.ts);
+        if (!acct.hours.has(hk)) acct.hours.set(hk, emptyBucket());
+        addRecord(acct.hours.get(hk), r);
+        const dk = localDateKey(r.ts);
+        if (!acct.days.has(dk)) acct.days.set(dk, emptyBucket());
+        addRecord(acct.days.get(dk), r);
+        if (now - r.ts <= 5 * HOUR) addRecord(acct.last5h, r);
+        addRecord(s.tokens, r);
+        if (dk === todayKey) addRecord(s.today, r);
+      }
     }
 
     // Attach live process state (sessions with no JSONL yet still show up).
@@ -318,7 +360,6 @@ function collectClaude(settings = {}) {
     s.desktopLastActivity = d.lastActivityAt;
   }
 
-  const todayHour = hourKey(startOfToday);
   const nowHour = hourKey(now);
   const out = [];
   let idx = 0;
@@ -326,9 +367,9 @@ function collectClaude(settings = {}) {
     if (a.accountUuid.startsWith('dir:') && a.sessions.size === 0) continue;
     const plan = a.orgUuid ? usage.get(a.orgUuid) : null;
     const daily = [];
-    for (let i = 0; i < days; i++) {
-      const dayStart = sinceMs + i * 24 * HOUR;
-      daily.push({ date: localDateKey(dayStart), ...sumBuckets(emptyBucket(), a.hours, hourKey(dayStart), hourKey(dayStart) + 23) });
+    for (let i = days - 1; i >= 0; i--) {
+      const date = localDateKey(localDayStart(i));
+      daily.push({ date, ...(a.days.get(date) || emptyBucket()) });
     }
     const hourly = [];
     for (let h = nowHour - 23; h <= nowHour; h++) {
@@ -376,8 +417,8 @@ function collectClaude(settings = {}) {
       desktopLastSeen: (a.orgUuid && usage.lastSeen.get(a.orgUuid)) || null,
       // seen in the Claude desktop app on this computer
       inDesktop: desktop.accounts.has(a.accountUuid),
-      today: sumBuckets(emptyBucket(), a.hours, todayHour, Infinity),
-      last5h: sumBuckets(emptyBucket(), a.hours, nowHour - 4, Infinity),
+      today: { ...(a.days.get(todayKey) || emptyBucket()) },
+      last5h: a.last5h,
       daily,
       hourly,
       counts: {
@@ -401,4 +442,4 @@ function claudeSearchPaths() {
   return [DESKTOP_DIR, ...configDirs().map((d) => d.dir)];
 }
 
-module.exports = { collectClaude, claudeSearchPaths, desktopDir, DESKTOP_DIR };
+module.exports = { collectClaude, claudeSearchPaths, desktopDir, DESKTOP_DIR, localDayStart, _fileCache: fileCache };

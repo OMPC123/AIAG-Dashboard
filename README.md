@@ -88,7 +88,7 @@ Each computer can only read its own files, so run the dashboard on every compute
 1. On the computer you want to **read from**: *Settings → Multiple computers → Share this computer's data*, then *Save*. Copy the **connection code** (`aiag1:…`).
 2. On the computer you **look at**: paste the code under *Other computers to read from* → *Add* → *Save*.
 
-Both must be on the same network (or a VPN such as Tailscale). Sharing is read-only, protected by the token inside the code, and only sends counts, session titles and project folder names, never conversation content. *Regenerate* invalidates the old code.
+Both must be on the same network (or a VPN such as Tailscale). Sharing is read-only and protected by the token inside the code; see *Security and privacy* for exactly what is sent. *Regenerate* invalidates the old code.
 
 **IP address changes** (e.g. a laptop getting a new address from the router) are handled automatically. When a computer stops answering at every known address, the dashboard probes the local network on the share port in the background. Only the computer that accepts the code's token, and has the same computer ID, is accepted. Its new address is saved, so the next refresh and later restarts use it. A computer that stays away (asleep, switched off) is re-checked with growing intervals, from 1 to 10 minutes. The connection code also contains the computer's name (`<name>.local`), which keeps working across IP changes on most home and office networks.
 
@@ -104,6 +104,17 @@ Both must be on the same network (or a VPN such as Tailscale). Sharing is read-o
 - **macOS Firewall**: *System Settings → Network → Firewall → Options*, allow incoming connections for AIAG Dashboard.
 - A sleeping laptop shows as *offline*; its last data stays visible.
 - Test the port: `nc -vz <ip> 47821` (macOS/Linux) or `Test-NetConnection <ip> -Port 47821` (Windows).
+
+## Security and privacy
+
+- **No network use by default.** Everything is read from local files. Nothing is uploaded; there is no telemetry and no auto-update.
+- **Sharing is off by default** and read-only. When on, the share server listens on the port you choose (47821). Only requests carrying the token from the connection code get data.
+- **What is shared:** account email / display name / organization name, plan %, token counts, session titles, project *folder names* (not full paths), model names, Antigravity conversation titles and quota. Never conversation content, files, or settings.
+- **The token is never sent to an unverified address.** Before sending it, the dashboard asks the address to prove it knows the token (HMAC over a random challenge). LAN rediscovery after an IP change uses only these challenges. A computer on version 0.4.0 or earlier can't answer them; it is still trusted at the addresses from its own code, until it has answered a challenge once.
+- **Traffic between computers is plain HTTP.** Someone who can watch your network traffic could read the shared numbers and the token. Use sharing only on networks you trust, or over a VPN such as Tailscale. Use *Regenerate* if a code may have leaked.
+- **LAN rediscovery** sends one small challenge request to each address on your subnet when a computer goes missing (at most every 1–10 minutes). Turn it off under *Settings → Multiple computers* on networks where scanning isn't allowed.
+- **Antigravity quota (opt-in)** reads a token from the local Antigravity process's command line and talks only to `127.0.0.1`.
+- **Data from other computers is treated as untrusted**: it is escaped before display, numbers are checked, and the window is locked to the app page (Content-Security-Policy, no navigation, no new windows).
 
 ## Antigravity model quota (experimental)
 

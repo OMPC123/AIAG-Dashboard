@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const https = require('https');
-const { run, runningProcessNames, HOUR, localDateKey } = require('./util');
+const { run, runningProcessNames, localDateKey } = require('./util');
 
 const HOME = os.homedir();
 const DEFAULT_DIRS = [
@@ -226,6 +226,8 @@ async function collectAntigravity(settings = {}) {
 
   const dirs = (settings.dataDirs && settings.dataDirs.length ? settings.dataDirs.map((d) => ({ name: path.basename(d), dir: d })) : DEFAULT_DIRS);
   const out = [];
+  // The probe reaches the running Antigravity app, i.e. one signed-in account: show its quota on one card only.
+  let quotaShown = false;
   for (const { name, dir } of dirs) {
     const dbFile = path.join(dir, 'conversation_summaries.db');
     if (!fs.existsSync(dbFile)) continue;
@@ -250,16 +252,26 @@ async function collectAntigravity(settings = {}) {
     }));
 
     const days = 14;
-    const startOfToday = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
-    const since = startOfToday - (days - 1) * 24 * HOUR;
+    // Local calendar days (DST / half-hour time zones). A conversation's steps count on its last active day.
+    const today = new Date();
+    const todayKey = localDateKey(today.getTime());
+    const byDay = new Map();
+    for (const c of conversations) {
+      if (!c.lastActivity) continue;
+      const k = localDateKey(c.lastActivity);
+      const d = byDay.get(k) || { conversations: 0, steps: 0 };
+      d.conversations += 1;
+      d.steps += c.steps;
+      byDay.set(k, d);
+    }
     const daily = [];
-    for (let i = 0; i < days; i++) {
-      const d0 = since + i * 24 * HOUR;
-      const inDay = conversations.filter((c) => c.lastActivity >= d0 && c.lastActivity < d0 + 24 * HOUR);
-      daily.push({ date: localDateKey(d0), conversations: inDay.length, steps: inDay.reduce((n, c) => n + c.steps, 0) });
+    for (let i = days - 1; i >= 0; i--) {
+      const date = localDateKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() - i).getTime());
+      daily.push({ date, ...(byDay.get(date) || { conversations: 0, steps: 0 }) });
     }
 
-    const q = quota && quota.length ? quota[0] : null;
+    const q = !quotaShown && quota && quota.length ? quota[0] : null;
+    if (q) quotaShown = true;
     out.push({
       id: `antigravity:${dir}`,
       kind: 'antigravity',
@@ -274,8 +286,8 @@ async function collectAntigravity(settings = {}) {
       counts: {
         working: conversations.filter((c) => c.state === 'working' || c.state === 'waiting').length,
         total: conversations.length,
-        today: conversations.filter((c) => c.lastActivity >= startOfToday).length,
-        stepsToday: conversations.filter((c) => c.lastActivity >= startOfToday).reduce((n, c) => n + c.steps, 0),
+        today: (byDay.get(todayKey) || { conversations: 0 }).conversations,
+        stepsToday: (byDay.get(todayKey) || { steps: 0 }).steps,
       },
       daily,
       conversations: conversations.slice(0, 40),

@@ -52,7 +52,14 @@ function until(ts) {
   if (m < 1440) return t('resetInHour', { h: Math.floor(m / 60), m: m % 60 });
   return t('resetInDay', { d: Math.floor(m / 1440) });
 }
-const stateTag = (st) => `<span class="state ${st}"><i></i>${esc(t('st_' + st))}</span>`;
+const STATES = new Set(['working', 'idle', 'waiting', 'error', 'ended', 'archived', 'off', 'desktop']);
+const stateTag = (st) => {
+  const s = STATES.has(st) ? st : 'off';
+  return `<span class="state ${s}"><i></i>${esc(t('st_' + s))}</span>`;
+};
+/** A finite number or null (values from other computers are not trusted to be numbers). */
+const numOrNull = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+const num = (v) => numOrNull(v) ?? 0;
 function level(pct) {
   const cls = pct >= 95 ? 'critical' : pct >= 80 ? 'serious' : pct >= 60 ? 'warning' : 'good';
   return [cls, t('lv_' + cls)];
@@ -204,11 +211,13 @@ function percentLineChart(el, { series, from, to, height = 120 }) {
 
 // ---------- shared pieces ----------
 function bar(pct) {
+  pct = numOrNull(pct);
   if (pct == null) return '<div class="bar"><span style="width:0"></span></div>';
   const [cls] = level(pct);
   return `<div class="bar ${cls}" role="meter" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${Math.min(100, pct)}%"></span></div>`;
 }
 function meter(label, pct, sampledAt) {
+  pct = numOrNull(pct);
   if (pct == null) return `<div class="meter"><div class="row"><span>${esc(label)}</span><b>—</b></div>${bar(null)}</div>`;
   const [, txt] = level(pct);
   return `<div class="meter"><div class="row"><span>${esc(label)}</span><b class="num">${pct}%</b></div>${bar(pct)}
@@ -218,7 +227,7 @@ function meter(label, pct, sampledAt) {
 function lowestQuota(g) {
   const ms = g.quota && g.quota.models;
   if (!ms || !ms.length) return null;
-  return ms.reduce((lo, m) => (m.remaining < lo.remaining ? m : lo));
+  return ms.map((m) => ({ ...m, remaining: num(m.remaining) })).reduce((lo, m) => (m.remaining < lo.remaining ? m : lo));
 }
 
 // ---------- full view ----------
@@ -287,9 +296,11 @@ function shortUntil(ts) {
 function quotaPools(models) {
   const pools = new Map();
   for (const m of models) {
-    const key = `${m.remaining.toFixed(4)}|${m.resetTime || ''}`;
-    if (!pools.has(key)) pools.set(key, { remaining: m.remaining, resetTime: m.resetTime, labels: [] });
-    pools.get(key).labels.push(m.label);
+    const remaining = num(m.remaining);
+    const resetTime = numOrNull(m.resetTime);
+    const key = `${remaining.toFixed(4)}|${resetTime || ''}`;
+    if (!pools.has(key)) pools.set(key, { remaining, resetTime, labels: [] });
+    pools.get(key).labels.push(String(m.label || ''));
   }
   return [...pools.values()]
     .map((p) => ({ ...p, family: [...new Set(p.labels.map((l) => l.replace(/\s*\([^)]*\)\s*$/, '')))] }))
@@ -328,10 +339,10 @@ function agCard(g) {
     ${quotaBlock(g)}
     <div class="section-label">${esc(t('activity'))}</div>
     <div class="stats">
-      <div class="stat"><div class="k">${esc(t('agActive'))}</div><div class="v num">${g.counts.working}</div></div>
-      <div class="stat"><div class="k">${esc(t('agToday'))}</div><div class="v num">${g.counts.today}</div></div>
+      <div class="stat"><div class="k">${esc(t('agActive'))}</div><div class="v num">${num(g.counts.working)}</div></div>
+      <div class="stat"><div class="k">${esc(t('agToday'))}</div><div class="v num">${num(g.counts.today)}</div></div>
       <div class="stat"><div class="k">${esc(t('agStepsToday'))}</div><div class="v num">${fmt(g.counts.stepsToday)}</div></div>
-      <div class="stat"><div class="k">${esc(t('agTotal'))}</div><div class="v num">${g.counts.total}</div></div>
+      <div class="stat"><div class="k">${esc(t('agTotal'))}</div><div class="v num">${num(g.counts.total)}</div></div>
     </div>
     <div class="section-label">${esc(t('agDaily'))}</div>
     <div class="chart ag-chart"></div>
@@ -344,20 +355,20 @@ function agCard(g) {
 }
 
 function renderFull(claude, antigravity) {
-  const working = claude.reduce((n, a) => n + a.counts.working, 0) + antigravity.reduce((n, g) => n + g.counts.working, 0);
-  const idle = claude.reduce((n, a) => n + a.counts.idle, 0);
-  const maxFh = Math.max(-1, ...claude.map((a) => (a.plan && a.plan.fiveHour) ?? -1));
-  const maxSd = Math.max(-1, ...claude.map((a) => (a.plan && a.plan.sevenDay) ?? -1));
+  const working = claude.reduce((n, a) => n + num(a.counts && a.counts.working), 0) + antigravity.reduce((n, g) => n + num(g.counts && g.counts.working), 0);
+  const idle = claude.reduce((n, a) => n + num(a.counts && a.counts.idle), 0);
+  const maxFh = Math.max(-1, ...claude.map((a) => numOrNull(a.plan && a.plan.fiveHour) ?? -1));
+  const maxSd = Math.max(-1, ...claude.map((a) => numOrNull(a.plan && a.plan.sevenDay) ?? -1));
   const tiles = [[t('tileWorking'), working, t('tileWorkingSub', { n: idle })]];
   if (claude.length) {
     tiles.push(
-      [t('tileClaudeOut'), fmt(claude.reduce((n, a) => n + a.today.output, 0)), t('tileClaudeOutSub', { msgs: claude.reduce((n, a) => n + a.today.messages, 0), n: claude.length })],
+      [t('tileClaudeOut'), fmt(claude.reduce((n, a) => n + num(a.today && a.today.output), 0)), t('tileClaudeOutSub', { msgs: claude.reduce((n, a) => n + num(a.today && a.today.messages), 0), n: claude.length })],
       [t('tileMax5h'), maxFh >= 0 ? `${maxFh}%` : '—', t('tileMaxSub')],
       [t('tileMax7d'), maxSd >= 0 ? `${maxSd}%` : '—', t('tileMaxSub')]
     );
   }
   if (antigravity.length) {
-    tiles.push([t('tileAg'), antigravity.reduce((n, g) => n + g.counts.today, 0), t('tileAgSub', { steps: fmt(antigravity.reduce((n, g) => n + g.counts.stepsToday, 0)) })]);
+    tiles.push([t('tileAg'), antigravity.reduce((n, g) => n + num(g.counts && g.counts.today), 0), t('tileAgSub', { steps: fmt(antigravity.reduce((n, g) => n + num(g.counts && g.counts.stepsToday), 0)) })]);
   }
   $('#tiles').innerHTML = tiles.map(([k, v, d]) => `<div class="tile"><div class="k">${esc(k)}</div><div class="v num">${esc(v)}</div><div class="d">${esc(d)}</div></div>`).join('');
 
@@ -401,12 +412,17 @@ function renderFull(claude, antigravity) {
   // cross-account daily comparison
   $('#daily-section').hidden = !claude.length;
   if (!claude.length) return;
-  const days = claude[0].daily.map((d) => d.date);
-  const series = claude.map((a, i) => ({ name: a.remote ? `${accountName(a)} @${a.machine}` : accountName(a), color: SERIES[i % SERIES.length], values: a.daily.map((d) => d.output) }));
+  const local = claude.find((a) => !a.remote) || claude[0];
+  const days = (local.daily || []).map((d) => String(d.date));
+  const byDate = (a) => new Map((a.daily || []).map((d) => [String(d.date), num(d.output)]));
+  const series = claude.map((a, i) => {
+    const m = byDate(a);
+    return { name: a.remote ? `${accountName(a)} @${a.machine}` : accountName(a), color: SERIES[i % SERIES.length], values: days.map((d) => m.get(d) || 0) };
+  });
   $('#daily-legend').innerHTML = series.length > 1 ? series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('') : '';
   barChart($('#daily-chart'), { categories: days.map((d) => d.slice(5).replace('-', '/')), series, height: 200, tipTitle: (k) => days[k] });
   $('#daily-table').innerHTML = `<table><thead><tr><th>${esc(t('date'))}</th>${series.map((x) => `<th>${esc(x.name)}</th>`).join('')}</tr></thead><tbody>${days
-    .map((d, k) => `<tr><td>${d}</td>${claude.map((a) => `<td class="num">${a.daily[k].output.toLocaleString(t.lang)}</td>`).join('')}</tr>`)
+    .map((d, k) => `<tr><td>${esc(d)}</td>${series.map((x) => `<td class="num">${x.values[k].toLocaleString(t.lang)}</td>`).join('')}</tr>`)
     .join('')}</tbody></table>`;
 }
 
@@ -427,8 +443,8 @@ function renderCompact(claude, antigravity) {
     rows.push(`<div class="crow${a.stale ? ' stale' : ''}">
       <div class="c-name"><i class="chip" style="background:${color}"></i><div class="c-text"><b>${esc(accountName(a))}</b><span>${machineTag(a)} Claude</span></div></div>
       <div class="c-state">${stateTag(claudeState(a))}<span class="c-sub">${esc(t('workIdleBadge', { w: a.counts.working, i: a.counts.idle }))}</span></div>
-      <div class="c-meter"><span class="c-k">5h</span>${bar(p.fiveHour)}<b class="num">${p.fiveHour != null ? p.fiveHour + '%' : '—'}</b></div>
-      <div class="c-meter"><span class="c-k">7d</span>${bar(p.sevenDay)}<b class="num">${p.sevenDay != null ? p.sevenDay + '%' : '—'}</b></div>
+      <div class="c-meter"><span class="c-k">5h</span>${bar(p.fiveHour)}<b class="num">${numOrNull(p.fiveHour) != null ? num(p.fiveHour) + '%' : '—'}</b></div>
+      <div class="c-meter"><span class="c-k">7d</span>${bar(p.sevenDay)}<b class="num">${numOrNull(p.sevenDay) != null ? num(p.sevenDay) + '%' : '—'}</b></div>
       <div class="c-num"><span class="c-k">${esc(t('tokOut'))}</span><b class="num">${fmt(a.today.output)}</b></div>
     </div>`);
   });
@@ -437,9 +453,9 @@ function renderCompact(claude, antigravity) {
     const used = lo ? Math.round((1 - lo.remaining) * 100) : null;
     rows.push(`<div class="crow${g.stale ? ' stale' : ''}">
       <div class="c-name"><i class="chip" style="background:${AG_COLOR}"></i><div class="c-text"><b>${esc(g.label)}</b><span>${machineTag(g)} Antigravity</span></div></div>
-      <div class="c-state">${stateTag(agState(g))}<span class="c-sub">${esc(t('agActive'))} ${g.counts.working}</span></div>
+      <div class="c-state">${stateTag(agState(g))}<span class="c-sub">${esc(t('agActive'))} ${num(g.counts.working)}</span></div>
       <div class="c-meter wide" title="${esc(lo ? lo.label : '')}"><span class="c-k">${esc(t('lowestQuota'))}</span>${bar(used)}<b class="num">${lo ? esc(t('quotaLeft', { p: Math.round(lo.remaining * 100) })) : '—'}</b></div>
-      <div class="c-num"><span class="c-k">${esc(t('agToday'))}</span><b class="num">${g.counts.today}</b></div>
+      <div class="c-num"><span class="c-k">${esc(t('agToday'))}</span><b class="num">${num(g.counts.today)}</b></div>
     </div>`);
   });
   $('#compact').innerHTML = rows.length ? `<div class="card compact-list">${rows.join('')}</div>` : '';
@@ -634,6 +650,7 @@ async function openSettings() {
   const sep = p.platform === 'win32' ? '\\' : '/';
   $('#ag-dirs').placeholder = `${home}${sep}.gemini${sep}antigravity`;
   f.shareEnabled.checked = v.share.enabled;
+  f.lanDiscovery.checked = v.lanDiscovery !== false;
   f.sharePort.value = v.share.port;
   $('#firewall-hint').textContent = p.platform === 'darwin' ? t('sFirewallMac') : p.platform === 'win32' ? t('sFirewallWin') : '';
   fillShare(p);
@@ -673,7 +690,7 @@ $('#settings-form').addEventListener('submit', async (e) => {
   // Something still typed in the "add computer" box counts as added.
   if ($('#remote-input').value.trim()) {
     const parsed = await dashboard.parseRemote($('#remote-input').value);
-    if (parsed) draftRemotes.push(parsed);
+    if (parsed) draftRemotes = [...draftRemotes.filter((r) => r.token !== parsed.token), parsed];
   }
   const saved = await dashboard.saveSettings({
     ...value,
@@ -683,6 +700,7 @@ $('#settings-form').addEventListener('submit', async (e) => {
     closeToTray: f.closeToTray.checked,
     share: { ...value.share, enabled: f.shareEnabled.checked, port: Math.min(65535, Math.max(1024, Number(f.sharePort.value) || 47821)) },
     remotes: draftRemotes,
+    lanDiscovery: f.lanDiscovery.checked,
     claude: { ...value.claude, enabled: f.claudeEnabled.checked, labels: acc.claude.labels, hidden: acc.claude.hidden },
     antigravity: { ...value.antigravity, enabled: f.agEnabled.checked, quotaProbe: f.quotaProbe.checked, dataDirs: lines(f.agDataDirs.value), labels: acc.ag.labels, hidden: acc.ag.hidden },
   });

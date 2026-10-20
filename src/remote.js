@@ -1,10 +1,11 @@
 // Machine-to-machine sharing over the LAN.
-//   - share server: serves this machine's local snapshot at GET /api/snapshot and a tiny GET /api/ping
-//     (both need the Bearer token; read-only)
+//   - share server: serves this machine's local snapshot at GET /api/snapshot (Bearer token, read-only) and
+//     GET /api/ping?nonce=… which proves knowledge of the token with an HMAC, so callers can check who is at an
+//     address WITHOUT sending the token there (the token is only sent to addresses that passed this check)
 //   - remote sources: pulls other machines' snapshots and merges them into the dashboard
 //   - connection code: one copy-paste string with a machine's id, name, LAN addresses, port and token
 //   - rediscovery: when a machine's IP changes (DHCP), it is found again by probing the local subnet
-//     on its port; only the machine that accepts the token (and has the same id) counts
+//     on its port with nonce challenges; only the machine whose proof matches the token (and id) counts
 const http = require('http');
 const os = require('os');
 const crypto = require('crypto');
@@ -17,6 +18,16 @@ let serverKey = '';
 
 const newToken = () => crypto.randomBytes(18).toString('base64url');
 const newMachineId = () => crypto.randomBytes(8).toString('hex');
+
+const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
+
+/** HMAC proof that the answering machine knows the token, bound to the caller's nonce and the machine id. */
+const proofFor = (token, nonce, id) => crypto.createHmac('sha256', String(token)).update(`aiag-ping|${nonce}|${id || ''}`).digest('base64url');
+function proofMatches(token, nonce, id, proof) {
+  const a = Buffer.from(proofFor(token, nonce, id));
+  const b = Buffer.from(String(proof || ''));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 
 function tokenMatches(header, token) {
   const m = /^Bearer (.+)$/.exec(header || '');
@@ -41,27 +52,48 @@ function applyShare(share, getSnapshot, onStatus, getInfo = () => ({})) {
   if (!share.enabled) return onStatus({ running: false });
 
   server = http.createServer((req, res) => {
-    const route = req.url.split('?')[0];
+    const url = new URL(req.url, 'http://x');
+    const route = url.pathname;
+    const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
     if (req.method !== 'GET' || (route !== API_PATH && route !== PING_PATH)) {
       res.writeHead(404).end();
+      return;
+    }
+    if (route === PING_PATH) {
+      // Challenge: answer with an HMAC of the caller's nonce. Reveals nothing without the token.
+      const nonce = url.searchParams.get('nonce') || '';
+      if (/^[A-Za-z0-9_-]{16,64}$/.test(nonce)) {
+        const { id } = getInfo();
+        res.writeHead(200, headers).end(JSON.stringify({ app: 'aiag', v: 2, id: id || null, proof: proofFor(share.token, nonce, id) }));
+        return;
+      }
+      // 0.4.0 clients: Bearer ping
+      if (!tokenMatches(req.headers.authorization, share.token)) {
+        res.writeHead(401).end();
+        return;
+      }
+      res.writeHead(200, headers).end(JSON.stringify({ app: 'aiag', ...getInfo() }));
       return;
     }
     if (!tokenMatches(req.headers.authorization, share.token)) {
       res.writeHead(401).end();
       return;
     }
-    const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
-    if (route === PING_PATH) {
-      res.writeHead(200, headers).end(JSON.stringify({ app: 'aiag', ...getInfo() }));
-      return;
-    }
     const snap = getSnapshot();
     res.writeHead(snap ? 200 : 503, headers);
     res.end(snap ? JSON.stringify(snap) : '{}');
   });
-  server.on('error', (e) =>
-    onStatus({ running: false, error: e.code === 'EADDRINUSE' ? { key: 'err_portInUse', vars: { port: share.port } } : { text: e.message } })
-  );
+  // Slow or idle connections can't pile up.
+  server.requestTimeout = 10000;
+  server.headersTimeout = 8000;
+  server.keepAliveTimeout = 2000;
+  server.maxConnections = 64;
+  server.on('error', (e) => {
+    // forget this config so saving settings again (same port) retries the bind
+    serverKey = '';
+    server = null;
+    onStatus({ running: false, error: e.code === 'EADDRINUSE' ? { key: 'err_portInUse', vars: { port: share.port } } : { text: e.message } });
+  });
   server.listen(share.port, share.host || '0.0.0.0', () => onStatus({ running: true, port: share.port, addresses: lanAddresses() }));
 }
 
@@ -181,7 +213,35 @@ function portOf(remote) {
 /** per remote (keyed by token): last good snapshot (shown as stale while unreachable) and the address that worked */
 const lastGood = new Map();
 const workingUrl = new Map();
+/** "token|base" -> 'proven' | 'legacy': who answers at an address was checked before the token is sent there */
+const verified = new Map();
 const rk = (remote) => remote.token;
+/** remotes (by token) that have answered a challenge at least once: no more 'legacy' acceptance for them */
+const supportsProof = new Set();
+const newNonce = () => crypto.randomBytes(18).toString('base64url');
+
+/**
+ * Challenge an address: 'proven' if it shows it knows the token (and has the expected id),
+ * 'legacy' if it is an older AIAG version that can't answer challenges, null otherwise (token is not sent).
+ */
+async function challenge(base, remote, timeoutMs = 3000) {
+  const nonce = newNonce();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${base}${PING_PATH}?nonce=${nonce}`, { signal: ctrl.signal });
+    if (res.status === 401 || res.status === 404) return 'legacy'; // 0.4.0 (Bearer-only ping) / before 0.4.0 (no ping)
+    if (!res.ok) return null;
+    const info = JSON.parse((await res.text()).slice(0, 4096));
+    if (!info || info.app !== 'aiag' || !info.proof) return null;
+    if (remote.id && info.id && info.id !== remote.id) return 'otherMachine';
+    return proofMatches(remote.token, nonce, info.id, info.proof) ? 'proven' : 'badToken';
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function fetchOne(url, token, timeoutMs = 4000) {
   const ctrl = new AbortController();
@@ -190,7 +250,10 @@ async function fetchOne(url, token, timeoutMs = 4000) {
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token || ''}` }, signal: ctrl.signal });
     if (res.status === 401) throw Object.assign(new Error('401'), { code: 'err_badToken', final: true });
     if (!res.ok) throw Object.assign(new Error(String(res.status)), { code: 'err_http', vars: { status: res.status } });
-    return await res.json();
+    if (Number(res.headers.get('content-length')) > MAX_SNAPSHOT_BYTES) throw Object.assign(new Error('too large'), { code: null, text: 'response too large' });
+    const text = await res.text();
+    if (text.length > MAX_SNAPSHOT_BYTES) throw Object.assign(new Error('too large'), { code: null, text: 'response too large' });
+    return JSON.parse(text);
   } catch (e) {
     if (typeof e.code === 'string' && e.code.startsWith('err_')) throw e;
     // Fresh errors: an AbortError is a DOMException whose `code` is a read-only number.
@@ -205,7 +268,7 @@ async function fetchOne(url, token, timeoutMs = 4000) {
 }
 
 /** Most useful error to show when every address failed: wrong token > refused > HTTP > timeout > other. */
-const ERR_RANK = { err_badToken: 0, err_refused: 1, err_http: 2, err_timeout: 3 };
+const ERR_RANK = { err_badToken: 0, err_otherMachine: 1, err_refused: 2, err_http: 3, err_timeout: 4 };
 
 const REMOTE_BUDGET_MS = 4500;
 
@@ -236,6 +299,17 @@ async function tryRemote(remote) {
   const errors = [];
   const attempt = async (url) => {
     try {
+      const vkey = `${key}|${baseOf(url)}`;
+      if (!verified.has(vkey)) {
+        const v = await challenge(baseOf(url), remote);
+        // 'legacy' (older version, no challenge support) is trusted only at addresses from the user's code,
+        // and never again once this machine has proven itself (someone else may now have its old IP).
+        if (v === 'badToken') throw Object.assign(new Error('401'), { code: 'err_badToken', final: true });
+        if (v === 'otherMachine') throw Object.assign(new Error('other'), { code: 'err_otherMachine' });
+        if (!v || (v === 'legacy' && supportsProof.has(key))) throw Object.assign(new Error('unverified'), { code: 'err_timeout' });
+        if (v === 'proven') supportsProof.add(key);
+        verified.set(vkey, v);
+      }
       const snap = await fetchOne(url, remote.token);
       workingUrl.set(key, url);
       lastGood.set(key, snap);
@@ -293,8 +367,9 @@ function maybeRediscover(remote, onFound, hosts) {
 }
 
 /**
- * Probe hosts on the remote's port for /api/ping with its token. Resolves to "http://ip:port" of the machine
- * that accepts the token (and reports the same machine id, when known), or null.
+ * Probe hosts on the remote's port with nonce challenges (the token itself is never sent). Resolves to
+ * "http://ip:port" of the machine that proves it knows the token (and reports the same machine id, when
+ * known), or null. Machines older than 0.4.1 can't answer challenges and are not rediscovered.
  */
 async function findRemote(remote, { hosts = subnetHosts(), concurrency = 64, timeoutMs = 800 } = {}) {
   const port = portOf(remote);
@@ -302,21 +377,11 @@ async function findRemote(remote, { hosts = subnetHosts(), concurrency = 64, tim
   let next = 0;
   const worker = async () => {
     while (!found && next < hosts.length) {
-      const host = hosts[next++];
-      const base = `http://${host}:${port}`;
-      try {
-        const info = await fetchOne(`${base}${PING_PATH}`, remote.token, timeoutMs);
-        if (info && info.app === 'aiag' && (!remote.id || !info.id || info.id === remote.id)) found = base;
-      } catch (e) {
-        // Versions before 0.4 have no /api/ping: the token-protected snapshot still identifies them.
-        if (e.code === 'err_http' && e.vars && e.vars.status === 404) {
-          try {
-            const snap = await fetchOne(`${base}${API_PATH}`, remote.token, 3000);
-            if (snap && Array.isArray(snap.claude)) found = base;
-          } catch {
-            /* not it */
-          }
-        }
+      const base = `http://${hosts[next++]}:${port}`;
+      if ((await challenge(base, remote, timeoutMs)) === 'proven' && !found) {
+        found = base;
+        verified.set(`${rk(remote)}|${base}`, 'proven');
+        supportsProof.add(rk(remote));
       }
     }
   };
@@ -329,9 +394,12 @@ function _resetForTests() {
   lastGood.clear();
   workingUrl.clear();
   scanState.clear();
+  verified.clear();
+  supportsProof.clear();
 }
 
 module.exports = {
   _resetForTests,
+  proofFor,
   applyShare, fetchRemote, findRemote, newToken, newMachineId, lanAddresses, subnetHosts, makeCode, parseCode, baseOf, API_PATH, PING_PATH,
 };
